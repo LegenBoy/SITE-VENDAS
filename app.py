@@ -85,19 +85,43 @@ def converter_para_float(valor_texto):
     if not valor_texto: return 0.0
     v = str(valor_texto).replace("R$", "").strip()
     
-    # Lógica inteligente: Se tem virgula, é decimal. Se não tem, e tem ponto, cuidado.
     if "," in v:
         v = v.replace(".", "").replace(",", ".")
     elif "." in v:
-        # Se tem apenas 1 ponto (ex 1874.50), aceita. Se tem mais (1.000.000), limpa.
-        if v.count(".") > 1:
-            v = v.replace(".", "")
+        if v.count(".") > 1: v = v.replace(".", "")
             
     try: return float(v)
     except: return 0.0
 
+# --- LÓGICA DE SALVAMENTO COM CALLBACK (SOLUÇÃO DO ERRO) ---
+def processar_salvamento(data, pedido, valor_txt, retira, origem, usuario_atual):
+    """
+    Função chamada ao clicar no botão.
+    Roda ANTES da tela recarregar, permitindo limpar o estado com segurança.
+    """
+    valor_final = converter_para_float(valor_txt)
+    
+    if pedido and valor_final > 0:
+        nova = {
+            "Data": data, 
+            "Pedido": pedido, 
+            "Vendedor": usuario_atual,
+            "Retira_Posterior": "Sim" if retira else "Não", 
+            "Valor": valor_final, 
+            "Pedido_Origem": origem
+        }
+        
+        # Salva no Google
+        if salvar_venda(nova): 
+            # AQUI: Limpamos o campo com segurança antes do redraw
+            st.session_state["valor_pendente"] = ""
+            st.toast("✅ Venda Salva com Sucesso!", icon="🚀")
+            # Pequena pausa para garantir que o Google processe antes do próximo get
+            time.sleep(1.5)
+    else:
+        st.toast("❌ Erro: Verifique o Valor ou Número do Pedido.", icon="⚠️")
+
 # --- 4. FUNÇÕES DE BANCO DE DADOS ---
-# Adicionei um cache_data=False ou clear explicito removendo decoradores para garantir que nao tenha cache
 def carregar_vendas():
     try:
         sh = conectar_gsheets()
@@ -120,7 +144,7 @@ def salvar_venda(nova_venda):
         ws.append_row(linha)
         return True
     except Exception as e:
-        st.error(f"Erro: {e}")
+        print(e)
         return False
 
 def atualizar_venda(id_original, dados_novos):
@@ -195,10 +219,7 @@ def modal_editar_venda(pedido_selecionado, dados_atuais, lista_usuarios):
     nova_data = c1.date_input("Data", value=val_data)
     novo_pedido = c2.text_input("Nº Pedido", value=dados_atuais['Pedido'])
     
-    # Prepara valor para edição
     valor_inicial = f"{float(dados_atuais['Valor']):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    
-    # Campo com formatação automática
     novo_valor_txt = st.text_input("Valor (R$)", value=valor_inicial, key="valor_editar_pendente", on_change=formatar_input_br)
     
     is_retira = True if dados_atuais['Retira_Posterior'] == "Sim" else False
@@ -216,16 +237,14 @@ def modal_editar_venda(pedido_selecionado, dados_atuais, lista_usuarios):
     
     st.write("")
     
-    # --- AQUI ESTÁ A CORREÇÃO DE ATUALIZAÇÃO ---
     if st.button("💾 SALVAR ALTERAÇÕES", type="primary", use_container_width=True):
         v_final = converter_para_float(novo_valor_txt)
         update = {"Data": nova_data, "Pedido": novo_pedido, "Vendedor": novo_vendedor, "Valor": v_final,
                   "Retira_Posterior": "Sim" if novo_retira else "Não", "Pedido_Origem": novo_origem if novo_retira else "-"}
         
-        with st.spinner("Enviando para o Google Sheets..."):
+        with st.spinner("Enviando..."):
             if atualizar_venda(pedido_selecionado, update): 
-                st.success("Atualizado com sucesso!")
-                # O PULO DO GATO: Esperar o Google processar antes de recarregar
+                st.success("Atualizado!")
                 time.sleep(2) 
                 st.rerun()
 
@@ -234,7 +253,7 @@ def modal_editar_venda(pedido_selecionado, dados_atuais, lista_usuarios):
         with st.spinner("Excluindo..."):
             if deletar_venda_sheet(pedido_selecionado): 
                 st.success("Apagado!")
-                time.sleep(2) # Espera também na exclusão
+                time.sleep(2)
                 st.rerun()
 
 # --- 7. SISTEMA PRINCIPAL ---
@@ -276,20 +295,14 @@ def sistema_principal():
         retira = st.toggle("É Retira Posterior?")
         origem = st.text_input("Vínculo (Pedido Origem)") if retira else "-"
 
-        if st.button("💾 REGISTRAR VENDA", type="primary", use_container_width=True):
-            valor_final = converter_para_float(valor_txt)
-            
-            if pedido and valor_final > 0:
-                nova = {"Data": data, "Pedido": pedido, "Vendedor": st.session_state['usuario'],
-                        "Retira_Posterior": "Sim" if retira else "Não", "Valor": valor_final, "Pedido_Origem": origem}
-                with st.spinner("Salvando..."):
-                    if salvar_venda(nova): 
-                        st.session_state["valor_pendente"] = ""
-                        st.success("Salvo!")
-                        # Espera para garantir que apareça na lista
-                        time.sleep(2) 
-                        st.rerun()
-            else: st.error("Valor inválido ou Pedido vazio.")
+        # BOTÃO COM CALLBACK (CORREÇÃO DO ERRO)
+        st.button(
+            "💾 REGISTRAR VENDA", 
+            type="primary", 
+            use_container_width=True,
+            on_click=processar_salvamento,
+            args=(data, pedido, valor_txt, retira, origem, st.session_state['usuario'])
+        )
 
     # ABA 2: LISTA DE CARDS
     with tabs[1]:
