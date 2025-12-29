@@ -55,9 +55,9 @@ def upload_imagem(arquivo):
         else: return None
     except Exception: return None
 
-# --- FORMATAÇÃO VISUAL (MANTÉM O VISUAL BONITO) ---
+# --- FORMATAÇÃO VISUAL NA TELA (MÁSCARA) ---
 def formatar_input_br():
-    """Formata visualmente o campo quando o usuário aperta Enter ou sai do campo"""
+    """Apenas muda o visual para o usuário (1.000,00), não afeta o cálculo final"""
     if "valor_pendente" in st.session_state: 
         chave = "valor_pendente"
         if st.session_state.get(chave) is None: return
@@ -71,66 +71,70 @@ def formatar_input_br():
     try:
         v_str = str(valor).replace("R$", "").strip()
         
-        # Tenta converter
+        # Se tem vírgula, usa lógica BR
         if "," in v_str:
             v_float = float(v_str.replace(".", "").replace(",", "."))
         else:
             v_float = float(v_str)
 
-        # Formata de volta para BR (1.000,00) apenas visualmente
+        # Formata visualmente de volta
         novo_valor = f"{v_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
         st.session_state[chave] = novo_valor
     except ValueError:
         pass 
 
-# --- CORREÇÃO DO CÁLCULO (HÍBRIDO) ---
+# --- CORREÇÃO MATEMÁTICA PRINCIPAL ---
 def converter_para_float(valor_texto):
     """
-    Converte texto para número de forma INTELIGENTE.
-    Aceita: 1.874,97 (BR) E TAMBÉM 1874.97 (US/Teclado Numérico)
+    Converte o texto para número float de forma segura.
+    Entrada: "1.874,97" -> Saída: 1874.97 (Float)
+    Entrada: "1874,97"  -> Saída: 1874.97 (Float)
     """
     if not valor_texto: return 0.0
     
-    # Limpa caracteres estranhos
+    # 1. Limpa o texto
     v = str(valor_texto).replace("R$", "").strip()
     
-    # REGRA 1: Se tem vírgula, assumimos que é formato BRASILEIRO
+    # 2. Lógica Rígida: Se tem VÍRGULA, ela é o decimal.
     if "," in v:
-        v = v.replace(".", "")  # Remove ponto de milhar (1.874 -> 1874)
-        v = v.replace(",", ".") # Troca vírgula por ponto decimal
-        
-    # REGRA 2: Se NÃO tem vírgula, mas tem PONTO (Ex: 1874.97)
+        v = v.replace(".", "")  # Remove pontos de milhar (1.874 vira 1874)
+        v = v.replace(",", ".") # Vírgula vira ponto decimal (1874,97 vira 1874.97)
+    
+    # 3. Se NÃO tem vírgula, mas tem ponto (1874.97 ou 1.000)
     elif "." in v:
-        # Se tiver mais de um ponto (ex: 1.000.000), limpamos tudo
-        if v.count(".") > 1:
-            v = v.replace(".", "")
-        # Se tiver só um ponto (ex: 1874.97), deixamos como está (decimal)
+        if v.count(".") == 1:
+            pass # Aceita (formato americano)
         else:
-            pass 
+            v = v.replace(".", "") # Remove pontos múltiplos
             
-    try: return float(v)
-    except: return 0.0
+    try:
+        return float(v)
+    except:
+        return 0.0
 
-# --- LÓGICA DE SALVAMENTO COM CALLBACK ---
+# --- CALLBACK DE SALVAMENTO ---
 def processar_salvamento(data, pedido, valor_txt, retira, origem, usuario_atual):
     valor_final = converter_para_float(valor_txt)
     
+    # Debug para você ver na tela se precisar (opcional)
+    # st.toast(f"Valor Convertido: {valor_final}")
+
     if pedido and valor_final > 0:
         nova = {
             "Data": data, 
             "Pedido": pedido, 
             "Vendedor": usuario_atual,
             "Retira_Posterior": "Sim" if retira else "Não", 
-            "Valor": valor_final, 
+            "Valor": valor_final, # Envia FLOAT puro
             "Pedido_Origem": origem
         }
         
         if salvar_venda(nova): 
             st.session_state["valor_pendente"] = ""
-            st.toast(f"✅ Venda de R$ {valor_final:,.2f} Salva!", icon="🚀")
+            st.toast(f"✅ Venda Salva! R$ {valor_final:,.2f}", icon="🚀")
             time.sleep(1.5)
     else:
-        st.toast("❌ Erro: Verifique o Valor ou Número do Pedido.", icon="⚠️")
+        st.toast("❌ Erro: Valor zerado ou Pedido vazio.", icon="⚠️")
 
 # --- 4. FUNÇÕES DE BANCO DE DADOS ---
 def carregar_vendas():
@@ -150,8 +154,15 @@ def salvar_venda(nova_venda):
     try:
         sh = conectar_gsheets()
         ws = sh.sheet1
-        linha = [str(nova_venda["Data"]), str(nova_venda["Pedido"]), nova_venda["Vendedor"], 
-                 nova_venda["Retira_Posterior"], float(nova_venda["Valor"]), str(nova_venda["Pedido_Origem"])]
+        # Conversão forçada para float na hora de criar a linha
+        linha = [
+            str(nova_venda["Data"]), 
+            str(nova_venda["Pedido"]), 
+            nova_venda["Vendedor"], 
+            nova_venda["Retira_Posterior"], 
+            float(nova_venda["Valor"]), # Garante float aqui
+            str(nova_venda["Pedido_Origem"])
+        ]
         ws.append_row(linha)
         return True
     except Exception as e:
@@ -295,13 +306,14 @@ def sistema_principal():
     with tabs[0]:
         data = st.date_input("Data", date.today())
         
-        # --- VERIFICAÇÃO DE PEDIDO DUPLICADO ---
+        # VERIFICAÇÃO DE PEDIDO
         pedido = st.text_input("Nº Pedido")
         if pedido and not df_vendas.empty:
             lista_pedidos = df_vendas['Pedido'].astype(str).tolist()
             if pedido in lista_pedidos:
                 st.warning(f"⚠️ Atenção: O pedido {pedido} já foi lançado anteriormente!", icon="🔔")
         
+        # VALOR
         valor_txt = st.text_input(
             "Valor R$", 
             key="valor_pendente", 
@@ -312,7 +324,7 @@ def sistema_principal():
         retira = st.toggle("É Retira Posterior?")
         origem = st.text_input("Vínculo (Pedido Origem)") if retira else "-"
 
-        # BOTÃO COM CALLBACK PARA SALVAR SEM ERRO
+        # BOTÃO COM CALLBACK
         st.button(
             "💾 REGISTRAR VENDA", 
             type="primary", 
@@ -337,7 +349,6 @@ def sistema_principal():
             df_filtrado = df_filtrado.sort_index(ascending=False)
             st.markdown(f"**{len(df_filtrado)} vendas encontradas**")
             
-            # Loop de Cards
             for index, row in df_filtrado.iterrows():
                 with st.container(border=True):
                     c_top1, c_top2 = st.columns([2, 1])
