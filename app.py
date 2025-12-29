@@ -55,9 +55,8 @@ def upload_imagem(arquivo):
         else: return None
     except Exception: return None
 
-# --- FORMATAÇÃO VISUAL NA TELA (MÁSCARA) ---
+# --- FORMATAÇÃO VISUAL ---
 def formatar_input_br():
-    """Apenas muda o visual para o usuário (1.000,00), não afeta o cálculo final"""
     if "valor_pendente" in st.session_state: 
         chave = "valor_pendente"
         if st.session_state.get(chave) is None: return
@@ -70,73 +69,72 @@ def formatar_input_br():
 
     try:
         v_str = str(valor).replace("R$", "").strip()
-        
-        # Se tem vírgula, usa lógica BR
         if "," in v_str:
             v_float = float(v_str.replace(".", "").replace(",", "."))
         else:
             v_float = float(v_str)
 
-        # Formata visualmente de volta
         novo_valor = f"{v_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
         st.session_state[chave] = novo_valor
     except ValueError:
         pass 
 
-# --- CORREÇÃO MATEMÁTICA PRINCIPAL ---
+# --- CONVERSÃO INTELIGENTE (FLOAT) ---
 def converter_para_float(valor_texto):
-    """
-    Converte o texto para número float de forma segura.
-    Entrada: "1.874,97" -> Saída: 1874.97 (Float)
-    Entrada: "1874,97"  -> Saída: 1874.97 (Float)
-    """
     if not valor_texto: return 0.0
-    
-    # 1. Limpa o texto
     v = str(valor_texto).replace("R$", "").strip()
     
-    # 2. Lógica Rígida: Se tem VÍRGULA, ela é o decimal.
     if "," in v:
-        v = v.replace(".", "")  # Remove pontos de milhar (1.874 vira 1874)
-        v = v.replace(",", ".") # Vírgula vira ponto decimal (1874,97 vira 1874.97)
-    
-    # 3. Se NÃO tem vírgula, mas tem ponto (1874.97 ou 1.000)
+        v = v.replace(".", "").replace(",", ".")
     elif "." in v:
-        if v.count(".") == 1:
-            pass # Aceita (formato americano)
-        else:
-            v = v.replace(".", "") # Remove pontos múltiplos
+        if v.count(".") > 1: v = v.replace(".", "")
             
-    try:
-        return float(v)
-    except:
-        return 0.0
+    try: return float(v)
+    except: return 0.0
 
 # --- CALLBACK DE SALVAMENTO ---
 def processar_salvamento(data, pedido, valor_txt, retira, origem, usuario_atual):
     valor_final = converter_para_float(valor_txt)
     
-    # Debug para você ver na tela se precisar (opcional)
-    # st.toast(f"Valor Convertido: {valor_final}")
-
     if pedido and valor_final > 0:
         nova = {
             "Data": data, 
             "Pedido": pedido, 
             "Vendedor": usuario_atual,
             "Retira_Posterior": "Sim" if retira else "Não", 
-            "Valor": valor_final, # Envia FLOAT puro
+            "Valor": valor_final,
             "Pedido_Origem": origem
         }
         
         if salvar_venda(nova): 
             st.session_state["valor_pendente"] = ""
-            st.toast(f"✅ Venda Salva! R$ {valor_final:,.2f}", icon="🚀")
+            st.toast(f"✅ Venda de R$ {valor_final:,.2f} Salva!", icon="🚀")
             time.sleep(1.5)
     else:
         st.toast("❌ Erro: Valor zerado ou Pedido vazio.", icon="⚠️")
 
-# --- 4. FUNÇÕES DE BANCO DE DADOS ---
+# --- 4. FUNÇÕES DE BANCO DE DADOS (CORRIGIDA) ---
+def limpar_valor_vindo_do_sheets(valor):
+    """
+    Função Mágica: Corrige o problema de '1874,97' virar '187497'
+    Se vier texto com vírgula do Sheets, ela converte corretamente.
+    """
+    if isinstance(valor, (int, float)):
+        return float(valor)
+    
+    v = str(valor).strip()
+    if not v: return 0.0
+    
+    # Se tiver vírgula, é BRASIL. Tira ponto de milhar e troca vírgula por ponto.
+    if "," in v:
+        v = v.replace(".", "")  # Tira 1.000
+        v = v.replace(",", ".") # Vira 1000.00
+    
+    try:
+        return float(v)
+    except:
+        return 0.0
+
 def carregar_vendas():
     try:
         sh = conectar_gsheets()
@@ -145,8 +143,13 @@ def carregar_vendas():
         df = pd.DataFrame(dados)
         colunas = ["Data", "Pedido", "Vendedor", "Retira_Posterior", "Valor", "Pedido_Origem"]
         if df.empty: return pd.DataFrame(columns=colunas)
+        
         df['Pedido'] = df['Pedido'].astype(str)
-        df['Valor'] = pd.to_numeric(df['Valor'], errors='coerce').fillna(0)
+        
+        # AQUI ESTÁ A CORREÇÃO DE LEITURA
+        # Aplica a limpeza linha por linha antes de virar número
+        df['Valor'] = df['Valor'].apply(limpar_valor_vindo_do_sheets)
+        
         return df
     except: return pd.DataFrame()
 
@@ -154,13 +157,13 @@ def salvar_venda(nova_venda):
     try:
         sh = conectar_gsheets()
         ws = sh.sheet1
-        # Conversão forçada para float na hora de criar a linha
+        # Envia float puro para o Sheets tentar formatar como número
         linha = [
             str(nova_venda["Data"]), 
             str(nova_venda["Pedido"]), 
             nova_venda["Vendedor"], 
             nova_venda["Retira_Posterior"], 
-            float(nova_venda["Valor"]), # Garante float aqui
+            float(nova_venda["Valor"]), 
             str(nova_venda["Pedido_Origem"])
         ]
         ws.append_row(linha)
@@ -241,7 +244,13 @@ def modal_editar_venda(pedido_selecionado, dados_atuais, lista_usuarios):
     nova_data = c1.date_input("Data", value=val_data)
     novo_pedido = c2.text_input("Nº Pedido", value=dados_atuais['Pedido'])
     
-    valor_inicial = f"{float(dados_atuais['Valor']):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    # Previne erro na hora de exibir o valor atual
+    try:
+        val_float = float(dados_atuais['Valor'])
+    except:
+        val_float = 0.0
+        
+    valor_inicial = f"{val_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     novo_valor_txt = st.text_input("Valor (R$)", value=valor_inicial, key="valor_editar_pendente", on_change=formatar_input_br)
     
     is_retira = True if dados_atuais['Retira_Posterior'] == "Sim" else False
@@ -306,14 +315,12 @@ def sistema_principal():
     with tabs[0]:
         data = st.date_input("Data", date.today())
         
-        # VERIFICAÇÃO DE PEDIDO
         pedido = st.text_input("Nº Pedido")
         if pedido and not df_vendas.empty:
             lista_pedidos = df_vendas['Pedido'].astype(str).tolist()
             if pedido in lista_pedidos:
                 st.warning(f"⚠️ Atenção: O pedido {pedido} já foi lançado anteriormente!", icon="🔔")
         
-        # VALOR
         valor_txt = st.text_input(
             "Valor R$", 
             key="valor_pendente", 
@@ -324,7 +331,6 @@ def sistema_principal():
         retira = st.toggle("É Retira Posterior?")
         origem = st.text_input("Vínculo (Pedido Origem)") if retira else "-"
 
-        # BOTÃO COM CALLBACK
         st.button(
             "💾 REGISTRAR VENDA", 
             type="primary", 
@@ -349,11 +355,18 @@ def sistema_principal():
             df_filtrado = df_filtrado.sort_index(ascending=False)
             st.markdown(f"**{len(df_filtrado)} vendas encontradas**")
             
+            # Loop de Cards
             for index, row in df_filtrado.iterrows():
                 with st.container(border=True):
                     c_top1, c_top2 = st.columns([2, 1])
                     c_top1.markdown(f"<div class='card-title'>📦 {row['Pedido']}</div>", unsafe_allow_html=True)
-                    valor_fmt = f"{row['Valor']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                    
+                    # Exibição do valor segura
+                    try:
+                        val_float = float(row['Valor'])
+                    except: val_float = 0.0
+                    
+                    valor_fmt = f"{val_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                     c_top2.markdown(f"<div class='card-valor'>R$ {valor_fmt}</div>", unsafe_allow_html=True)
                     
                     c_mid1, c_mid2, c_mid3 = st.columns([1, 1, 1])
