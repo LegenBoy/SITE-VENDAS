@@ -304,6 +304,13 @@ def sistema_principal():
     with tabs[0]:
         data = st.date_input("Data", date.today())
         
+        usuario_lancamento = st.session_state['usuario']
+        if st.session_state['funcao'] == 'admin':
+            lista_users = df_usuarios['Usuario'].unique().tolist() if not df_usuarios.empty else []
+            if lista_users:
+                idx = lista_users.index(usuario_lancamento) if usuario_lancamento in lista_users else 0
+                usuario_lancamento = st.selectbox("Vendedor", lista_users, index=idx)
+        
         pedido = st.text_input("Nº Pedido")
         if pedido and not df_vendas.empty:
             lista_pedidos = df_vendas['Pedido'].astype(str).tolist()
@@ -324,7 +331,7 @@ def sistema_principal():
             type="primary", 
             use_container_width=True,
             on_click=processar_salvamento,
-            args=(data, pedido, valor_txt, retira, origem, st.session_state['usuario'])
+            args=(data, pedido, valor_txt, retira, origem, usuario_lancamento)
         )
 
     # ABA 2: LISTA DE CARDS
@@ -377,10 +384,8 @@ def sistema_principal():
         st.markdown("### Controle de Entregas (Retira Posterior)")
         
         # Filtra apenas o que é Retira (Sim ou Entregue)
-        # Mostramos TODAS as retiras da loja para facilitar a operação, ou filtra se preferir
-        # Aqui estou usando df_vendas (geral) para que qualquer um possa dar baixa se necessário, 
-        # mas você pode mudar para df_completo se quiser restringir.
-        df_retira = df_vendas[df_vendas['Retira_Posterior'].isin(['Sim', 'Entregue'])].copy()
+        # Usa df_completo: Admin vê tudo, Vendedor vê apenas os seus
+        df_retira = df_completo[df_completo['Retira_Posterior'].isin(['Sim', 'Entregue'])].copy()
         
         if not df_retira.empty:
             pendentes = df_retira[df_retira['Retira_Posterior'] == 'Sim']
