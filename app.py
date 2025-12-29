@@ -5,23 +5,23 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import time
 
-# --- 1. CONFIGURAÇÃO DE CONEXÃO (SEGURA E RESILIENTE) ---
-# Usamos a porta 6543 (Pooler) para evitar erros de rede e IPv6
+# --- 1. CONFIGURAÇÃO DE CONEXÃO (SENHA NOVA E HOST DIRETO) ---
+# Substituímos pela sua nova senha e mantemos a porta 5432 padrão
 DB_CONFIG = {
     "host": "db.buwezivkuvfkzyfozwnn.supabase.co",
     "database": "postgres",
     "user": "postgres",
-    "password": "!@#@Gabriel@@#!", 
-    "port": "6543",
-    "sslmode": "require",
-    "connect_timeout": 10
+    "password": "7VSQW3rRDHbJbrJr", 
+    "port": "5432",
+    "connect_timeout": 20
 }
 
 def get_connection():
     try:
-        return psycopg2.connect(**DB_CONFIG)
+        # Adicionamos sslmode=require pois o Supabase exige para conexões externas
+        return psycopg2.connect(**DB_CONFIG, sslmode='require')
     except Exception as e:
-        st.error(f"Erro Crítico de Conexão: {e}")
+        st.error(f"Erro de Conexão: {e}")
         return None
 
 # --- 2. FUNÇÕES DE BANCO DE DADOS ---
@@ -31,9 +31,9 @@ def verificar_login_banco(usuario_digitado, senha_digitada):
     if not conn: return None
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        # TRIM e lower() garantem que espaços ou maiúsculas não bloqueiem o login
+        # Busca exata ignorando espaços
         query = "SELECT * FROM usuarios WHERE TRIM(usuario) = %s"
-        cur.execute(query, (usuario_digitado.strip().lower(),))
+        cur.execute(query, (usuario_digitado.strip(),))
         user_data = cur.fetchone()
         cur.close()
         conn.close()
@@ -48,6 +48,7 @@ def carregar_vendas_banco():
     conn = get_connection()
     if not conn: return pd.DataFrame()
     try:
+        # SQL para carregar as vendas
         df = pd.read_sql("SELECT * FROM vendas ORDER BY id DESC", conn)
         conn.close()
         return df
@@ -106,8 +107,8 @@ if 'logado' not in st.session_state:
 if not st.session_state['logado']:
     st.title("🔐 Acesso ao Sistema")
     with st.container(border=True):
-        u_in = st.text_input("Usuário")
-        s_in = st.text_input("Senha", type="password")
+        u_in = st.text_input("Usuário").lower().strip()
+        s_in = st.text_input("Senha", type="password").strip()
         
         if st.button("Entrar", use_container_width=True):
             user = verificar_login_banco(u_in, s_in)
@@ -118,13 +119,13 @@ if not st.session_state['logado']:
                     'nome': user['nome'], 
                     'funcao': user['funcao']
                 })
-                st.success("Bem-vindo!")
+                st.success("Login realizado!")
                 time.sleep(0.5)
                 st.rerun()
             else:
-                st.error("Usuário ou senha incorretos.")
+                st.error("Usuário ou senha incorretos no banco.")
 else:
-    # --- SISTEMA LOGADO ---
+    # BARRA LATERAL
     st.sidebar.title(f"👤 {st.session_state['nome']}")
     if st.sidebar.button("Sair", type="primary"):
         st.session_state['logado'] = False
@@ -139,10 +140,11 @@ else:
             data_v = st.date_input("Data", date.today())
             ped_v = st.text_input("Número do Pedido", key="f_pedido")
             
+            # Verificação rápida de duplicidade
             df_v = carregar_vendas_banco()
             if ped_v and not df_v.empty:
                 if str(ped_v) in df_v['pedido'].astype(str).tolist():
-                    st.warning("⚠️ Pedido já cadastrado anteriormente!")
+                    st.warning("⚠️ Pedido já cadastrado!")
 
             val_v = st.text_input("Valor (Ex: 1874,97)", key="f_valor")
             ret_v = st.toggle("Retira Posterior?")
@@ -157,10 +159,11 @@ else:
                         'valor': valor_f, 'pedido_origem': ori_v
                     }
                     if salvar_venda_banco(dados_venda):
+                        # Limpa os campos através da Session State
                         st.session_state["f_pedido"] = ""
                         st.session_state["f_valor"] = ""
-                        if "f_origem" in st.session_state: st.session_state["f_origem"] = ""
-                        st.success("✅ Venda registrada no banco!")
+                        if "form_origem" in st.session_state: st.session_state["f_origem"] = ""
+                        st.success("✅ Salvo com sucesso!")
                         time.sleep(1)
                         st.rerun()
                 else:
@@ -178,7 +181,7 @@ else:
             st.metric("Total Vendido", f"R$ {total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
             st.dataframe(df_rel, use_container_width=True, hide_index=True)
         else:
-            st.info("Nenhuma venda encontrada no banco.")
+            st.info("Nenhuma venda encontrada.")
 
     # ABA 3: RETIRA
     with tab3:
@@ -197,4 +200,4 @@ else:
                             if atualizar_status_entrega(r['id'], 'Entregue'):
                                 st.rerun()
             else:
-                st.success("Tudo em dia! Nenhuma retirada pendente.")
+                st.success("Nenhuma entrega pendente no momento.")
