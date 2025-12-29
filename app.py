@@ -5,21 +5,27 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import time
 
-# --- 1. CONFIGURAÇÃO DE CONEXÃO (SUPABASE) ---
-# TROQUE PELA SUA URL REAL DO SUPABASE
-DB_URL = "postgresql://postgres:!@#@Gabriel@@#!@db.buwezivkuvfkzyfozwnn.supabase.co:5432/postgres"
+# --- 1. CONFIGURAÇÃO DE CONEXÃO (SEGURA) ---
+# Separamos os dados para que caracteres especiais na senha não quebrem a URL
+DB_CONFIG = {
+    "host": "db.buwezivkuvfkzyfozwnn.supabase.co",
+    "database": "postgres",
+    "user": "postgres",
+    "password": "!@#@Gabriel@@#!",  # Sua senha agora é tratada como texto puro
+    "port": "5432"
+}
 
 def get_connection():
-    return psycopg2.connect(DB_URL)
+    # Conexão usando dicionário é mais segura para senhas com símbolos
+    return psycopg2.connect(**DB_CONFIG)
 
 # --- 2. FUNÇÕES DE BANCO DE DADOS ---
 
 def verificar_login_banco(usuario_digitado, senha_digitada):
-    """Busca o usuário no banco e valida a senha ignorando espaços extras"""
     try:
         conn = get_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        # TRAP: Usamos TRIM para garantir que espaços no BD não atrapalhem
+        # TRIM remove espaços acidentais no banco de dados
         query = "SELECT * FROM usuarios WHERE TRIM(usuario) = %s"
         cur.execute(query, (usuario_digitado.strip(),))
         user_data = cur.fetchone()
@@ -36,10 +42,12 @@ def verificar_login_banco(usuario_digitado, senha_digitada):
 def carregar_vendas_banco():
     try:
         conn = get_connection()
+        # O pandas usa a conexão segura para ler os dados
         df = pd.read_sql("SELECT * FROM vendas ORDER BY id DESC", conn)
         conn.close()
         return df
-    except:
+    except Exception as e:
+        st.error(f"Erro ao carregar vendas: {e}")
         return pd.DataFrame()
 
 def salvar_venda_banco(nova):
@@ -56,7 +64,8 @@ def salvar_venda_banco(nova):
         cur.close()
         conn.close()
         return True
-    except:
+    except Exception as e:
+        st.error(f"Erro ao salvar: {e}")
         return False
 
 def atualizar_status_entrega(id_venda, status):
@@ -92,7 +101,7 @@ if 'logado' not in st.session_state:
 if not st.session_state['logado']:
     st.title("🔐 Acesso ao Sistema")
     with st.container(border=True):
-        u_in = st.text_input("Usuário").lower() # Forçamos minúsculo para evitar erro de caixa
+        u_in = st.text_input("Usuário").lower()
         s_in = st.text_input("Senha", type="password")
         
         if st.button("Entrar", use_container_width=True):
@@ -108,7 +117,7 @@ if not st.session_state['logado']:
                 time.sleep(0.5)
                 st.rerun()
             else:
-                st.error("Usuário ou senha incorretos no banco de dados.")
+                st.error("Usuário ou senha incorretos.")
 else:
     # --- SISTEMA LOGADO ---
     st.sidebar.title(f"👤 {st.session_state['nome']}")
@@ -118,14 +127,12 @@ else:
 
     tab1, tab2, tab3 = st.tabs(["📝 Lançar Venda", "📋 Relatório", "📦 Retira Posterior"])
 
-    # ABA 1: LANÇAR
     with tab1:
         st.subheader("Novo Registro")
         with st.container(border=True):
             data_v = st.date_input("Data", date.today())
             ped_v = st.text_input("Número do Pedido", key="f_pedido")
             
-            # Validação de duplicidade
             df_v = carregar_vendas_banco()
             if ped_v and not df_v.empty:
                 if str(ped_v) in df_v['pedido'].astype(str).tolist():
@@ -144,7 +151,6 @@ else:
                         'valor': valor_f, 'pedido_origem': ori_v
                     }
                     if salvar_venda_banco(dados_venda):
-                        # LIMPEZA DOS CAMPOS
                         st.session_state["f_pedido"] = ""
                         st.session_state["f_valor"] = ""
                         if "f_origem" in st.session_state: st.session_state["f_origem"] = ""
@@ -154,12 +160,10 @@ else:
                 else:
                     st.error("Preencha pedido e valor.")
 
-    # ABA 2: RELATÓRIO
     with tab2:
         st.subheader("Histórico de Vendas")
         df_rel = carregar_vendas_banco()
         if not df_rel.empty:
-            # Filtro por vendedor (Admin vê tudo)
             if st.session_state['funcao'] != 'admin':
                 df_rel = df_rel[df_rel['vendedor'] == st.session_state['nome']]
             
@@ -169,7 +173,6 @@ else:
         else:
             st.info("Nada encontrado.")
 
-    # ABA 3: RETIRA
     with tab3:
         st.subheader("Pedidos para Retirada")
         df_ret = carregar_vendas_banco()
@@ -187,4 +190,3 @@ else:
                                 st.rerun()
             else:
                 st.success("Nenhuma entrega pendente.")
-
