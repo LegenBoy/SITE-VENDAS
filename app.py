@@ -7,7 +7,7 @@ import time
 
 # --- 1. CONFIGURAÇÃO DE CONEXÃO (SUPABASE) ---
 # Substitua pela sua URI que você copiou do Supabase
-DB_URL = "postgresql://postgres:!@#@Gabriel@@#!@db.buwezivkuvfkzyfozwnn.supabase.co:5432/postgres"
+DB_URL = "postgresql://postgres:[SUA_SENHA]@db.xyz.supabase.co:5432/postgres"
 
 def get_connection():
     return psycopg2.connect(DB_URL)
