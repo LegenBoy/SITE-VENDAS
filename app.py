@@ -6,61 +6,36 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import requests
 
-# --- 1. CONFIGURAÇÃO DA PÁGINA (MOBILE FRIENDLY) ---
+# --- 1. CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
     page_title="MetaVendas App",
     page_icon="📱",
     layout="wide",
-    initial_sidebar_state="collapsed" # Menu fechado para ganhar espaço no celular
+    initial_sidebar_state="collapsed"
 )
 
-# --- 2. CSS PARA VISUAL DE APP ---
+# --- 2. CSS PARA VISUAL ---
 st.markdown("""
 <style>
-    /* Borda arredondada suave e sombras estilo App */
-    .stButton > button { 
-        border-radius: 20px; 
-        font-weight: bold; 
-        height: 3em; /* Botão mais alto para dedo */
-    }
-    
-    /* Foto Redonda */
+    .stButton > button { border-radius: 20px; font-weight: bold; height: 3em; }
     div[data-testid="stSidebarUserContent"] img {
-        border-radius: 50% !important;
-        object-fit: cover !important;
-        aspect-ratio: 1 / 1 !important;
-        border: 3px solid #2E86C1;
+        border-radius: 50% !important; object-fit: cover !important;
+        aspect-ratio: 1 / 1 !important; border: 3px solid #2E86C1;
     }
-
-    /* Estilo do Card de Venda */
     div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] {
-        background-color: #f9f9f9; /* Fundo claro para o card (modo light) */
-        border-radius: 15px;
-        margin-bottom: 10px;
+        background-color: #f9f9f9; border-radius: 15px; margin-bottom: 10px;
     }
-    /* Ajuste para modo escuro automático */
     @media (prefers-color-scheme: dark) {
         div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] {
             background-color: #262730;
         }
     }
-    
-    /* Título do Pedido no Card */
-    .card-title {
-        font-size: 18px;
-        font-weight: bold;
-        color: #2E86C1;
-    }
-    .card-valor {
-        font-size: 20px;
-        font-weight: bold;
-        color: #28a745;
-        text-align: right;
-    }
+    .card-title { font-size: 18px; font-weight: bold; color: #2E86C1; }
+    .card-valor { font-size: 20px; font-weight: bold; color: #28a745; text-align: right; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. CONEXÃO E FUNÇÕES DE BACKEND ---
+# --- 3. CONEXÃO E FUNÇÕES ÚTEIS ---
 def conectar_gsheets():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds_dict = dict(st.secrets["gcp_service_account"])
@@ -79,6 +54,47 @@ def upload_imagem(arquivo):
         if dados["success"]: return dados["data"]["url"]
         else: return None
     except Exception: return None
+
+# --- MÁGICA DE FORMATAÇÃO AUTOMÁTICA ---
+def formatar_input_br():
+    """
+    Função chamada automaticamente quando o usuário aperta Enter no campo de valor.
+    Ela pega o que foi digitado (ex: 1874,50) e transforma em visual (1.874,50)
+    """
+    # Verifica qual campo chamou a função (temos um no Lançar e um no Editar)
+    if "valor_pendente" in st.session_state:
+        chave = "valor_pendente"
+    elif "valor_editar_pendente" in st.session_state:
+        chave = "valor_editar_pendente"
+    else:
+        return
+
+    valor_digitado = st.session_state[chave]
+    if not valor_digitado: return
+
+    try:
+        # Limpeza: Tira R$, espaços e pontos antigos
+        v = str(valor_digitado).replace("R$", "").strip()
+        if "." in v and "," in v: v = v.replace(".", "") # Tira o ponto de milhar se o usuario digitou
+        
+        # Troca virgula por ponto para o Python entender matematica
+        v_float = float(v.replace(",", "."))
+        
+        # Formata de volta para BR (1.000,00)
+        # {:,.2f} gera 1,000.00 -> trocamos os sinais
+        novo_valor = f"{v_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        
+        # Atualiza o campo na tela
+        st.session_state[chave] = novo_valor
+    except ValueError:
+        pass # Se digitou letra, não faz nada
+
+def converter_para_float(valor_texto):
+    """Converte o texto formatado (1.000,00) para float (1000.00) para salvar"""
+    if not valor_texto: return 0.0
+    v = str(valor_texto).replace(".", "").replace(",", ".")
+    try: return float(v)
+    except: return 0.0
 
 # --- 4. FUNÇÕES DE BANCO DE DADOS ---
 def carregar_vendas():
@@ -187,7 +203,10 @@ def modal_editar_venda(pedido_selecionado, dados_atuais, lista_usuarios):
         
         nova_data = c1.date_input("Data", value=val_data)
         novo_pedido = c2.text_input("Nº Pedido", value=dados_atuais['Pedido'])
-        novo_valor = st.number_input("Valor R$", value=float(dados_atuais['Valor']), min_value=0.0)
+        
+        # Valor formatado para edição
+        valor_inicial = f"{float(dados_atuais['Valor']):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        novo_valor_txt = st.text_input("Valor (R$)", value=valor_inicial)
         
         is_retira = True if dados_atuais['Retira_Posterior'] == "Sim" else False
         novo_retira = st.toggle("Retira Posterior?", value=is_retira)
@@ -203,7 +222,9 @@ def modal_editar_venda(pedido_selecionado, dados_atuais, lista_usuarios):
             novo_vendedor = st.text_input("Vendedor", value=dados_atuais['Vendedor'], disabled=True)
         
         if st.form_submit_button("💾 Salvar", type="primary", use_container_width=True):
-            update = {"Data": nova_data, "Pedido": novo_pedido, "Vendedor": novo_vendedor, "Valor": novo_valor,
+            # Converte
+            v_final = converter_para_float(novo_valor_txt)
+            update = {"Data": nova_data, "Pedido": novo_pedido, "Vendedor": novo_vendedor, "Valor": v_final,
                       "Retira_Posterior": "Sim" if novo_retira else "Não", "Pedido_Origem": novo_origem if novo_retira else "-"}
             with st.spinner("..."):
                 if atualizar_venda(pedido_selecionado, update): st.success("Ok!"); time.sleep(1); st.rerun()
@@ -224,9 +245,7 @@ def sistema_principal():
         if st.button("Sair", type="primary", use_container_width=True):
             st.session_state['logado'] = False; st.rerun()
 
-    # Título menor para caber no celular
     st.markdown("### 🚀 Painel MetaVendas")
-    
     with st.spinner("..."):
         df_vendas = carregar_vendas()
         df_usuarios = carregar_usuarios()
@@ -234,29 +253,41 @@ def sistema_principal():
     if st.session_state['funcao'] == 'admin': df_completo = df_vendas
     else: df_completo = df_vendas[df_vendas['Vendedor'] == st.session_state['usuario']]
 
-    # Abas com ícones para economizar espaço
     abas = ["📝 Lançar", "📋 Vendas"]
     if st.session_state['funcao'] == 'admin': abas.append("⚙️ Equipe")
     tabs = st.tabs(abas)
 
-    # ABA 1: LANÇAR (Mobile Friendly)
+    # ABA 1: LANÇAR (COM FORMATAÇÃO AUTOMATICA)
     with tabs[0]:
         data = st.date_input("Data", date.today())
         pedido = st.text_input("Nº Pedido")
-        valor = st.number_input("Valor R$", min_value=0.0, format="%.2f")
+        
+        # --- CAMPO COM FORMATAÇÃO ---
+        # key="valor_pendente" liga ao on_change
+        valor_txt = st.text_input(
+            "Valor R$", 
+            key="valor_pendente", 
+            on_change=formatar_input_br, 
+            placeholder="0,00"
+        )
+        
         retira = st.toggle("É Retira Posterior?")
         origem = st.text_input("Vínculo (Pedido Origem)") if retira else "-"
 
         if st.button("💾 REGISTRAR VENDA", type="primary", use_container_width=True):
-            if pedido and valor > 0:
+            valor_final = converter_para_float(valor_txt)
+            
+            if pedido and valor_final > 0:
                 nova = {"Data": data, "Pedido": pedido, "Vendedor": st.session_state['usuario'],
-                        "Retira_Posterior": "Sim" if retira else "Não", "Valor": valor, "Pedido_Origem": origem}
-                if salvar_venda(nova): st.success("Salvo!"); time.sleep(1); st.rerun()
-            else: st.error("Preencha Valor e Pedido")
+                        "Retira_Posterior": "Sim" if retira else "Não", "Valor": valor_final, "Pedido_Origem": origem}
+                if salvar_venda(nova): 
+                    # Limpa o campo após salvar
+                    st.session_state["valor_pendente"] = "" 
+                    st.success("Salvo!"); time.sleep(1); st.rerun()
+            else: st.error("Valor inválido ou Pedido vazio.")
 
-    # ABA 2: LISTA DE CARDS (Estilo iFood/Uber)
+    # ABA 2: LISTA DE CARDS
     with tabs[1]:
-        # Filtros Compactos
         with st.expander("🔍 Filtros de Busca"):
             f_txt = st.text_input("Buscar Pedido")
             lista_vendedores = df_completo['Vendedor'].unique().tolist()
@@ -267,38 +298,30 @@ def sistema_principal():
         if f_txt: df_filtrado = df_filtrado[df_filtrado['Pedido'].str.contains(f_txt, case=False)]
         if f_vend and st.session_state['funcao'] == 'admin': df_filtrado = df_filtrado[df_filtrado['Vendedor'].isin(f_vend)]
         
-        # Ordenar: Mais recente primeiro
         if not df_filtrado.empty:
             df_filtrado = df_filtrado.sort_index(ascending=False)
-            
             st.markdown(f"**{len(df_filtrado)} vendas encontradas**")
             
-            # --- LOOP DE CARDS ---
             for index, row in df_filtrado.iterrows():
-                # Cria um CONTAINER com borda (Parece um cartão)
                 with st.container(border=True):
-                    # Linha 1: Pedido e Valor
                     c_top1, c_top2 = st.columns([2, 1])
                     c_top1.markdown(f"<div class='card-title'>📦 {row['Pedido']}</div>", unsafe_allow_html=True)
-                    c_top2.markdown(f"<div class='card-valor'>R$ {row['Valor']:.2f}</div>", unsafe_allow_html=True)
                     
-                    # Linha 2: Detalhes
+                    # Formatação visual bonita
+                    valor_fmt = f"{row['Valor']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                    c_top2.markdown(f"<div class='card-valor'>R$ {valor_fmt}</div>", unsafe_allow_html=True)
+                    
                     c_mid1, c_mid2, c_mid3 = st.columns([1, 1, 1])
                     c_mid1.caption(f"📅 {row['Data']}")
                     c_mid2.caption(f"👤 {row['Vendedor']}")
                     
-                    # Ícone de Retira
-                    if row['Retira_Posterior'] == "Sim":
-                        c_mid3.markdown("⚠️ **Retira**")
-                    else:
-                        c_mid3.markdown("✅ **Normal**")
+                    if row['Retira_Posterior'] == "Sim": c_mid3.markdown("⚠️ **Retira**")
+                    else: c_mid3.markdown("✅ **Normal**")
                     
-                    # Se tiver vínculo
                     if row['Pedido_Origem'] and row['Pedido_Origem'] != "-":
                         st.caption(f"🔗 Vínculo: {row['Pedido_Origem']}")
                     
-                    # Botão de Editar (Largura total para facilitar o clique no celular)
-                    if st.button("✏️ Editar / Detalhes", key=f"btn_{row['Pedido']}", use_container_width=True):
+                    if st.button("✏️ Editar", key=f"btn_{row['Pedido']}", use_container_width=True):
                         modal_editar_venda(row['Pedido'], row, df_usuarios)
         else:
             st.info("Nenhuma venda encontrada.")
