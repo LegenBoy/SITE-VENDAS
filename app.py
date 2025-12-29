@@ -112,12 +112,12 @@ def limpar_valor_vindo_do_sheets(valor):
         return 0.0
 
 def carregar_vendas():
+    colunas = ["Data", "Pedido", "Vendedor", "Retira_Posterior", "Valor", "Pedido_Origem"]
     try:
         sh = conectar_gsheets()
         ws = sh.sheet1
         dados = ws.get_all_records()
         df = pd.DataFrame(dados)
-        colunas = ["Data", "Pedido", "Vendedor", "Retira_Posterior", "Valor", "Pedido_Origem"]
         if df.empty: return pd.DataFrame(columns=colunas)
         
         df['Pedido'] = df['Pedido'].astype(str)
@@ -127,7 +127,7 @@ def carregar_vendas():
         df['Valor'] = df['Valor'].apply(limpar_valor_vindo_do_sheets)
         
         return df
-    except: return pd.DataFrame()
+    except: return pd.DataFrame(columns=colunas)
 
 def salvar_venda(nova_venda):
     try:
