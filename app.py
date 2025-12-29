@@ -5,8 +5,8 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import time
 
-# --- 1. CONFIGURAÇÃO DE CONEXÃO (SENHA NOVA E HOST DIRETO) ---
-# Substituímos pela sua nova senha e mantemos a porta 5432 padrão
+# --- 1. CONFIGURAÇÃO DE CONEXÃO ---
+# Usamos o host direto e a porta 5432 com SSL obrigatório
 DB_CONFIG = {
     "host": "db.buwezivkuvfkzyfozwnn.supabase.co",
     "database": "postgres",
@@ -18,7 +18,7 @@ DB_CONFIG = {
 
 def get_connection():
     try:
-        # Adicionamos sslmode=require pois o Supabase exige para conexões externas
+        # O sslmode='require' é fundamental para o Supabase aceitar a conexão externa
         return psycopg2.connect(**DB_CONFIG, sslmode='require')
     except Exception as e:
         st.error(f"Erro de Conexão: {e}")
@@ -31,9 +31,9 @@ def verificar_login_banco(usuario_digitado, senha_digitada):
     if not conn: return None
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        # Busca exata ignorando espaços
+        # TRIM remove espaços invisíveis que podem ter sido salvos no banco
         query = "SELECT * FROM usuarios WHERE TRIM(usuario) = %s"
-        cur.execute(query, (usuario_digitado.strip(),))
+        cur.execute(query, (usuario_digitado.strip().lower(),))
         user_data = cur.fetchone()
         cur.close()
         conn.close()
@@ -48,7 +48,6 @@ def carregar_vendas_banco():
     conn = get_connection()
     if not conn: return pd.DataFrame()
     try:
-        # SQL para carregar as vendas
         df = pd.read_sql("SELECT * FROM vendas ORDER BY id DESC", conn)
         conn.close()
         return df
@@ -125,7 +124,7 @@ if not st.session_state['logado']:
             else:
                 st.error("Usuário ou senha incorretos no banco.")
 else:
-    # BARRA LATERAL
+    # --- SISTEMA LOGADO ---
     st.sidebar.title(f"👤 {st.session_state['nome']}")
     if st.sidebar.button("Sair", type="primary"):
         st.session_state['logado'] = False
@@ -133,14 +132,13 @@ else:
 
     tab1, tab2, tab3 = st.tabs(["📝 Lançar Venda", "📋 Relatório", "📦 Retira Posterior"])
 
-    # ABA 1: LANÇAR
     with tab1:
         st.subheader("Novo Registro")
         with st.container(border=True):
             data_v = st.date_input("Data", date.today())
             ped_v = st.text_input("Número do Pedido", key="f_pedido")
             
-            # Verificação rápida de duplicidade
+            # Verificação de duplicidade
             df_v = carregar_vendas_banco()
             if ped_v and not df_v.empty:
                 if str(ped_v) in df_v['pedido'].astype(str).tolist():
@@ -159,17 +157,16 @@ else:
                         'valor': valor_f, 'pedido_origem': ori_v
                     }
                     if salvar_venda_banco(dados_venda):
-                        # Limpa os campos através da Session State
+                        # LIMPANDO CAMPOS (Reset automático)
                         st.session_state["f_pedido"] = ""
                         st.session_state["f_valor"] = ""
-                        if "form_origem" in st.session_state: st.session_state["f_origem"] = ""
+                        if "f_origem" in st.session_state: st.session_state["f_origem"] = ""
                         st.success("✅ Salvo com sucesso!")
                         time.sleep(1)
                         st.rerun()
                 else:
                     st.error("Preencha pedido e valor.")
 
-    # ABA 2: RELATÓRIO
     with tab2:
         st.subheader("Histórico de Vendas")
         df_rel = carregar_vendas_banco()
@@ -183,7 +180,6 @@ else:
         else:
             st.info("Nenhuma venda encontrada.")
 
-    # ABA 3: RETIRA
     with tab3:
         st.subheader("Pedidos Pendentes")
         df_ret = carregar_vendas_banco()
@@ -200,4 +196,4 @@ else:
                             if atualizar_status_entrega(r['id'], 'Entregue'):
                                 st.rerun()
             else:
-                st.success("Nenhuma entrega pendente no momento.")
+                st.success("Nenhuma entrega pendente.")
