@@ -93,12 +93,8 @@ def converter_para_float(valor_texto):
     try: return float(v)
     except: return 0.0
 
-# --- LÓGICA DE SALVAMENTO COM CALLBACK (SOLUÇÃO DO ERRO) ---
+# --- LÓGICA DE SALVAMENTO COM CALLBACK ---
 def processar_salvamento(data, pedido, valor_txt, retira, origem, usuario_atual):
-    """
-    Função chamada ao clicar no botão.
-    Roda ANTES da tela recarregar, permitindo limpar o estado com segurança.
-    """
     valor_final = converter_para_float(valor_txt)
     
     if pedido and valor_final > 0:
@@ -111,12 +107,9 @@ def processar_salvamento(data, pedido, valor_txt, retira, origem, usuario_atual)
             "Pedido_Origem": origem
         }
         
-        # Salva no Google
         if salvar_venda(nova): 
-            # AQUI: Limpamos o campo com segurança antes do redraw
             st.session_state["valor_pendente"] = ""
             st.toast("✅ Venda Salva com Sucesso!", icon="🚀")
-            # Pequena pausa para garantir que o Google processe antes do próximo get
             time.sleep(1.5)
     else:
         st.toast("❌ Erro: Verifique o Valor ou Número do Pedido.", icon="⚠️")
@@ -242,9 +235,9 @@ def modal_editar_venda(pedido_selecionado, dados_atuais, lista_usuarios):
         update = {"Data": nova_data, "Pedido": novo_pedido, "Vendedor": novo_vendedor, "Valor": v_final,
                   "Retira_Posterior": "Sim" if novo_retira else "Não", "Pedido_Origem": novo_origem if novo_retira else "-"}
         
-        with st.spinner("Enviando..."):
+        with st.spinner("Enviando para o Google Sheets..."):
             if atualizar_venda(pedido_selecionado, update): 
-                st.success("Atualizado!")
+                st.success("Atualizado com sucesso!")
                 time.sleep(2) 
                 st.rerun()
 
@@ -283,7 +276,16 @@ def sistema_principal():
     # ABA 1: LANÇAR
     with tabs[0]:
         data = st.date_input("Data", date.today())
+        
+        # --- VERIFICAÇÃO DE PEDIDO ---
         pedido = st.text_input("Nº Pedido")
+        
+        # A Mágica do Aviso acontece aqui:
+        if pedido and not df_vendas.empty:
+            # Pega todos os pedidos existentes como string
+            lista_pedidos = df_vendas['Pedido'].astype(str).tolist()
+            if pedido in lista_pedidos:
+                st.warning(f"⚠️ Atenção! O pedido **{pedido}** já existe no sistema!", icon="🔔")
         
         valor_txt = st.text_input(
             "Valor R$", 
@@ -295,7 +297,6 @@ def sistema_principal():
         retira = st.toggle("É Retira Posterior?")
         origem = st.text_input("Vínculo (Pedido Origem)") if retira else "-"
 
-        # BOTÃO COM CALLBACK (CORREÇÃO DO ERRO)
         st.button(
             "💾 REGISTRAR VENDA", 
             type="primary", 
@@ -320,6 +321,7 @@ def sistema_principal():
             df_filtrado = df_filtrado.sort_index(ascending=False)
             st.markdown(f"**{len(df_filtrado)} vendas encontradas**")
             
+            # Loop de Cards
             for index, row in df_filtrado.iterrows():
                 with st.container(border=True):
                     c_top1, c_top2 = st.columns([2, 1])
@@ -337,7 +339,7 @@ def sistema_principal():
                     if row['Pedido_Origem'] and row['Pedido_Origem'] != "-":
                         st.caption(f"🔗 Vínculo: {row['Pedido_Origem']}")
                     
-                    if st.button("✏️ Editar", key=f"btn_{row['Pedido']}", use_container_width=True):
+                    if st.button("✏️ Editar", key=f"btn_{row['Pedido']}_{index}", use_container_width=True):
                         modal_editar_venda(row['Pedido'], row, df_usuarios)
         else:
             st.info("Nenhuma venda encontrada.")
