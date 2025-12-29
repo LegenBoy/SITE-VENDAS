@@ -55,30 +55,6 @@ def upload_imagem(arquivo):
         else: return None
     except Exception: return None
 
-# --- FORMATAÇÃO VISUAL ---
-def formatar_input_br():
-    if "valor_pendente" in st.session_state: 
-        chave = "valor_pendente"
-        if st.session_state.get(chave) is None: return
-    elif "valor_editar_pendente" in st.session_state: 
-        chave = "valor_editar_pendente"
-    else: return
-
-    valor = st.session_state[chave]
-    if not valor: return
-
-    try:
-        v_str = str(valor).replace("R$", "").strip()
-        if "," in v_str:
-            v_float = float(v_str.replace(".", "").replace(",", "."))
-        else:
-            v_float = float(v_str)
-
-        novo_valor = f"{v_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        st.session_state[chave] = novo_valor
-    except ValueError:
-        pass 
-
 # --- CONVERSÃO INTELIGENTE (FLOAT) ---
 def converter_para_float(valor_texto):
     if not valor_texto: return 0.0
@@ -122,7 +98,7 @@ def limpar_valor_vindo_do_sheets(valor):
     if isinstance(valor, (int, float)):
         return float(valor)
     
-    v = str(valor).strip()
+    v = str(valor).replace("R$", "").strip()
     if not v: return 0.0
     
     # Se tiver vírgula, é BRASIL. Tira ponto de milhar e troca vírgula por ponto.
@@ -251,7 +227,7 @@ def modal_editar_venda(pedido_selecionado, dados_atuais, lista_usuarios):
         val_float = 0.0
         
     valor_inicial = f"{val_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    novo_valor_txt = st.text_input("Valor (R$)", value=valor_inicial, key="valor_editar_pendente", on_change=formatar_input_br)
+    novo_valor_txt = st.text_input("Valor (R$)", value=valor_inicial, key="valor_editar_pendente")
     
     is_retira = True if dados_atuais['Retira_Posterior'] == "Sim" else False
     novo_retira = st.toggle("Retira Posterior?", value=is_retira)
@@ -324,7 +300,6 @@ def sistema_principal():
         valor_txt = st.text_input(
             "Valor R$", 
             key="valor_pendente", 
-            on_change=formatar_input_br, 
             placeholder="0,00"
         )
         
