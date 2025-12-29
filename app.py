@@ -55,13 +55,11 @@ def upload_imagem(arquivo):
         else: return None
     except Exception: return None
 
-# --- LÓGICA DE FORMATAÇÃO AUTOMÁTICA ---
+# --- FORMATAÇÃO VISUAL (ON_CHANGE) ---
 def formatar_input_br():
     """Formata visualmente o campo quando o usuário aperta Enter"""
-    # Identifica qual campo chamou a função
     if "valor_pendente" in st.session_state: 
         chave = "valor_pendente"
-        # Pequena lógica para evitar loop se a chave não foi a trigger
         if st.session_state.get(chave) is None: return
     elif "valor_editar_pendente" in st.session_state: 
         chave = "valor_editar_pendente"
@@ -72,14 +70,11 @@ def formatar_input_br():
 
     try:
         v_str = str(valor).replace("R$", "").strip()
-        
-        # Lógica para aceitar ponto ou virgula
         if "," in v_str:
             v_float = float(v_str.replace(".", "").replace(",", "."))
         else:
             v_float = float(v_str)
 
-        # Formata de volta para visual BR (1.000,00)
         novo_valor = f"{v_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
         st.session_state[chave] = novo_valor
     except ValueError:
@@ -90,15 +85,19 @@ def converter_para_float(valor_texto):
     if not valor_texto: return 0.0
     v = str(valor_texto).replace("R$", "").strip()
     
+    # Lógica inteligente: Se tem virgula, é decimal. Se não tem, e tem ponto, cuidado.
     if "," in v:
         v = v.replace(".", "").replace(",", ".")
     elif "." in v:
-        if v.count(".") > 1: v = v.replace(".", "")
+        # Se tem apenas 1 ponto (ex 1874.50), aceita. Se tem mais (1.000.000), limpa.
+        if v.count(".") > 1:
+            v = v.replace(".", "")
             
     try: return float(v)
     except: return 0.0
 
 # --- 4. FUNÇÕES DE BANCO DE DADOS ---
+# Adicionei um cache_data=False ou clear explicito removendo decoradores para garantir que nao tenha cache
 def carregar_vendas():
     try:
         sh = conectar_gsheets()
@@ -186,10 +185,9 @@ def tela_login():
                     st.rerun()
                 else: st.error("Incorreto.")
 
-# --- 6. MODAL EDIÇÃO (CORRIGIDO: SEM ST.FORM) ---
+# --- 6. MODAL EDIÇÃO ---
 @st.dialog("✏️ Editar Venda")
 def modal_editar_venda(pedido_selecionado, dados_atuais, lista_usuarios):
-    # ATENÇÃO: Removemos o st.form aqui para o on_change funcionar
     c1, c2 = st.columns(2)
     try: val_data = pd.to_datetime(dados_atuais['Data'], dayfirst=True).date() if isinstance(dados_atuais['Data'], str) else dados_atuais['Data']
     except: val_data = date.today()
@@ -197,10 +195,10 @@ def modal_editar_venda(pedido_selecionado, dados_atuais, lista_usuarios):
     nova_data = c1.date_input("Data", value=val_data)
     novo_pedido = c2.text_input("Nº Pedido", value=dados_atuais['Pedido'])
     
-    # Valor formatado para edição
+    # Prepara valor para edição
     valor_inicial = f"{float(dados_atuais['Valor']):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     
-    # Key para formatação automática na edição
+    # Campo com formatação automática
     novo_valor_txt = st.text_input("Valor (R$)", value=valor_inicial, key="valor_editar_pendente", on_change=formatar_input_br)
     
     is_retira = True if dados_atuais['Retira_Posterior'] == "Sim" else False
@@ -216,19 +214,28 @@ def modal_editar_venda(pedido_selecionado, dados_atuais, lista_usuarios):
     else:
         novo_vendedor = st.text_input("Vendedor", value=dados_atuais['Vendedor'], disabled=True)
     
-    st.write("") # Espaço
+    st.write("")
     
-    # Botão Normal (não é mais form_submit_button)
+    # --- AQUI ESTÁ A CORREÇÃO DE ATUALIZAÇÃO ---
     if st.button("💾 SALVAR ALTERAÇÕES", type="primary", use_container_width=True):
         v_final = converter_para_float(novo_valor_txt)
         update = {"Data": nova_data, "Pedido": novo_pedido, "Vendedor": novo_vendedor, "Valor": v_final,
                   "Retira_Posterior": "Sim" if novo_retira else "Não", "Pedido_Origem": novo_origem if novo_retira else "-"}
-        with st.spinner("..."):
-            if atualizar_venda(pedido_selecionado, update): st.success("Ok!"); time.sleep(1); st.rerun()
+        
+        with st.spinner("Enviando para o Google Sheets..."):
+            if atualizar_venda(pedido_selecionado, update): 
+                st.success("Atualizado com sucesso!")
+                # O PULO DO GATO: Esperar o Google processar antes de recarregar
+                time.sleep(2) 
+                st.rerun()
 
     st.markdown("---")
     if st.button("🗑️ Excluir Venda", use_container_width=True):
-        if deletar_venda_sheet(pedido_selecionado): st.success("Apagado!"); time.sleep(1); st.rerun()
+        with st.spinner("Excluindo..."):
+            if deletar_venda_sheet(pedido_selecionado): 
+                st.success("Apagado!")
+                time.sleep(2) # Espera também na exclusão
+                st.rerun()
 
 # --- 7. SISTEMA PRINCIPAL ---
 def sistema_principal():
@@ -243,7 +250,7 @@ def sistema_principal():
             st.session_state['logado'] = False; st.rerun()
 
     st.markdown("### 🚀 Painel MetaVendas")
-    with st.spinner("..."):
+    with st.spinner("Carregando dados..."):
         df_vendas = carregar_vendas()
         df_usuarios = carregar_usuarios()
 
@@ -254,7 +261,7 @@ def sistema_principal():
     if st.session_state['funcao'] == 'admin': abas.append("⚙️ Equipe")
     tabs = st.tabs(abas)
 
-    # ABA 1: LANÇAR (COM FORMATAÇÃO)
+    # ABA 1: LANÇAR
     with tabs[0]:
         data = st.date_input("Data", date.today())
         pedido = st.text_input("Nº Pedido")
@@ -275,9 +282,13 @@ def sistema_principal():
             if pedido and valor_final > 0:
                 nova = {"Data": data, "Pedido": pedido, "Vendedor": st.session_state['usuario'],
                         "Retira_Posterior": "Sim" if retira else "Não", "Valor": valor_final, "Pedido_Origem": origem}
-                if salvar_venda(nova): 
-                    st.session_state["valor_pendente"] = ""
-                    st.success("Salvo!"); time.sleep(1); st.rerun()
+                with st.spinner("Salvando..."):
+                    if salvar_venda(nova): 
+                        st.session_state["valor_pendente"] = ""
+                        st.success("Salvo!")
+                        # Espera para garantir que apareça na lista
+                        time.sleep(2) 
+                        st.rerun()
             else: st.error("Valor inválido ou Pedido vazio.")
 
     # ABA 2: LISTA DE CARDS
