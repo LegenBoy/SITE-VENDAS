@@ -4,17 +4,29 @@ from datetime import date
 import time
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import requests # BIBLIOTECA NOVA PARA O UPLOAD
+import requests
 
-# --- CONFIGURAÇÃO ---
+# --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="MetaVendas System", page_icon="🚀", layout="wide")
 
-# --- CSS ---
+# --- CSS PERSONALIZADO (ATUALIZADO PARA FOTO REDONDA) ---
 st.markdown("""
 <style>
+    /* Estilo dos inputs e botões */
     .stTextInput > div > div > input { border-radius: 10px; }
     .stButton > button { border-radius: 20px; font-weight: bold; }
+    
+    /* Ajuste do topo da barra lateral */
     div[data-testid="stSidebarUserContent"] { padding-top: 2rem; }
+    
+    /* --- O SEGREDO DA FOTO REDONDA --- */
+    /* Isso mira especificamente na imagem dentro da barra lateral */
+    div[data-testid="stSidebarUserContent"] img {
+        border-radius: 50% !important; /* Força o círculo */
+        object-fit: cover !important;   /* Corta a imagem para não esticar */
+        aspect-ratio: 1 / 1 !important; /* Garante que altura = largura (círculo perfeito) */
+        border: 3px solid #2E86C1;      /* Uma borda azul bonita (opcional) */
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -26,23 +38,17 @@ def conectar_gsheets():
     client = gspread.authorize(creds)
     return client.open("SistemaMetas_DB")
 
-# --- FUNÇÃO NOVA: UPLOAD PARA IMGBB ---
+# --- FUNÇÃO DE UPLOAD PARA IMGBB ---
 def upload_imagem(arquivo):
-    """Envia a imagem para o ImgBB e retorna o Link Direto"""
     try:
         api_key = st.secrets["imgbb"]["key"]
         url = "https://api.imgbb.com/1/upload"
-        
         payload = {"key": api_key}
         files = {"image": arquivo.getvalue()}
-        
         response = requests.post(url, data=payload, files=files)
         dados = response.json()
-        
-        if dados["success"]:
-            return dados["data"]["url"] # Retorna o link direto (https://...)
-        else:
-            return None
+        if dados["success"]: return dados["data"]["url"]
+        else: return None
     except Exception as e:
         st.error(f"Erro no upload: {e}")
         return None
@@ -85,7 +91,6 @@ def criar_usuario(novo_user):
         ws = sh.worksheet("Usuarios")
         users = ws.col_values(1)
         if novo_user["Usuario"] in users: return False, "Usuário já existe!"
-        
         linha = [novo_user["Usuario"], novo_user["Senha"], novo_user["Nome"], novo_user["Funcao"], novo_user["Foto_URL"]]
         ws.append_row(linha)
         return True, "Criado com sucesso!"
@@ -127,11 +132,14 @@ def tela_login():
                     st.rerun()
                 else: st.error("Dados inválidos.")
 
-# --- SISTEMA ---
+# --- SISTEMA PRINCIPAL ---
 def sistema_principal():
     with st.sidebar:
+        # Use uma foto genérica se o usuário não tiver uma
         foto = st.session_state['foto'] if st.session_state['foto'] else "https://cdn-icons-png.flaticon.com/512/149/149071.png"
-        st.image(foto, width=100)
+        # O CSS lá em cima vai transformar isso em um círculo
+        st.image(foto, width=120) 
+        
         st.title(st.session_state['nome'])
         st.caption(f"Perfil: {st.session_state['funcao'].upper()}")
         if st.button("Sair", type="primary"):
@@ -145,7 +153,7 @@ def sistema_principal():
     else: df_view = df_vendas[df_vendas['Vendedor'] == st.session_state['usuario']]
 
     abas = ["📝 Lançar Venda", "📋 Relatório"]
-    if st.session_state['funcao'] == 'admin': abas.append("⚙️ Usuários")
+    if st.session_state['funcao'] == 'admin': abas.append("⚙️ Equipe")
     tabs = st.tabs(abas)
 
     # ABA 1: VENDA
@@ -179,7 +187,7 @@ def sistema_principal():
             st.dataframe(df_view, use_container_width=True, hide_index=True)
         else: st.info("Sem dados.")
 
-    # ABA 3: GESTÃO (COM UPLOAD DE FOTO)
+    # ABA 3: GESTÃO (COM UPLOAD)
     if st.session_state['funcao'] == 'admin':
         with tabs[2]:
             st.header("Cadastrar Equipe")
@@ -188,17 +196,14 @@ def sistema_principal():
                 u_pass = st.text_input("Senha")
                 u_nome = st.text_input("Nome Completo")
                 u_role = st.selectbox("Função", ["vendedor", "admin"])
-                
-                # --- MUDANÇA AQUI: INPUT DE ARQUIVO ---
                 arquivo_foto = st.file_uploader("Foto de Perfil (Opcional)", type=["jpg", "png", "jpeg"])
                 
                 if st.form_submit_button("Cadastrar"):
                     url_foto = ""
                     if arquivo_foto:
-                        with st.spinner("Enviando foto para a nuvem..."):
+                        with st.spinner("Enviando foto..."):
                             url_foto = upload_imagem(arquivo_foto)
-                            if not url_foto:
-                                st.error("Erro ao subir imagem. O usuário será criado sem foto.")
+                            if not url_foto: st.error("Erro no upload da imagem.")
                     
                     novo = {"Usuario": u_user, "Senha": u_pass, "Nome": u_nome, "Funcao": u_role, "Foto_URL": url_foto}
                     ok, msg = criar_usuario(novo)
@@ -209,8 +214,6 @@ def sistema_principal():
             df_users = carregar_usuarios()
             if not df_users.empty:
                 st.dataframe(df_users[["Usuario", "Nome", "Funcao", "Foto_URL"]], use_container_width=True)
-                
-                # DELETAR
                 c_del1, c_del2 = st.columns([3,1])
                 user_del = c_del1.selectbox("Excluir Usuário", df_users["Usuario"].unique())
                 if c_del2.button("Deletar"):
