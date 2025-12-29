@@ -55,9 +55,9 @@ def upload_imagem(arquivo):
         else: return None
     except Exception: return None
 
-# --- FORMATAÇÃO VISUAL (ON_CHANGE) ---
+# --- FORMATAÇÃO VISUAL (MANTÉM O VISUAL BONITO) ---
 def formatar_input_br():
-    """Formata visualmente o campo quando o usuário aperta Enter"""
+    """Formata visualmente o campo quando o usuário aperta Enter ou sai do campo"""
     if "valor_pendente" in st.session_state: 
         chave = "valor_pendente"
         if st.session_state.get(chave) is None: return
@@ -70,25 +70,43 @@ def formatar_input_br():
 
     try:
         v_str = str(valor).replace("R$", "").strip()
+        
+        # Tenta converter
         if "," in v_str:
             v_float = float(v_str.replace(".", "").replace(",", "."))
         else:
             v_float = float(v_str)
 
+        # Formata de volta para BR (1.000,00) apenas visualmente
         novo_valor = f"{v_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
         st.session_state[chave] = novo_valor
     except ValueError:
         pass 
 
+# --- CORREÇÃO DO CÁLCULO (HÍBRIDO) ---
 def converter_para_float(valor_texto):
-    """Converte texto formatado para float seguro para o banco"""
+    """
+    Converte texto para número de forma INTELIGENTE.
+    Aceita: 1.874,97 (BR) E TAMBÉM 1874.97 (US/Teclado Numérico)
+    """
     if not valor_texto: return 0.0
+    
+    # Limpa caracteres estranhos
     v = str(valor_texto).replace("R$", "").strip()
     
+    # REGRA 1: Se tem vírgula, assumimos que é formato BRASILEIRO
     if "," in v:
-        v = v.replace(".", "").replace(",", ".")
+        v = v.replace(".", "")  # Remove ponto de milhar (1.874 -> 1874)
+        v = v.replace(",", ".") # Troca vírgula por ponto decimal
+        
+    # REGRA 2: Se NÃO tem vírgula, mas tem PONTO (Ex: 1874.97)
     elif "." in v:
-        if v.count(".") > 1: v = v.replace(".", "")
+        # Se tiver mais de um ponto (ex: 1.000.000), limpamos tudo
+        if v.count(".") > 1:
+            v = v.replace(".", "")
+        # Se tiver só um ponto (ex: 1874.97), deixamos como está (decimal)
+        else:
+            pass 
             
     try: return float(v)
     except: return 0.0
@@ -109,7 +127,7 @@ def processar_salvamento(data, pedido, valor_txt, retira, origem, usuario_atual)
         
         if salvar_venda(nova): 
             st.session_state["valor_pendente"] = ""
-            st.toast("✅ Venda Salva com Sucesso!", icon="🚀")
+            st.toast(f"✅ Venda de R$ {valor_final:,.2f} Salva!", icon="🚀")
             time.sleep(1.5)
     else:
         st.toast("❌ Erro: Verifique o Valor ou Número do Pedido.", icon="⚠️")
@@ -277,15 +295,12 @@ def sistema_principal():
     with tabs[0]:
         data = st.date_input("Data", date.today())
         
-        # --- VERIFICAÇÃO DE PEDIDO ---
+        # --- VERIFICAÇÃO DE PEDIDO DUPLICADO ---
         pedido = st.text_input("Nº Pedido")
-        
-        # A Mágica do Aviso acontece aqui:
         if pedido and not df_vendas.empty:
-            # Pega todos os pedidos existentes como string
             lista_pedidos = df_vendas['Pedido'].astype(str).tolist()
             if pedido in lista_pedidos:
-                st.warning(f"⚠️ Atenção! O pedido **{pedido}** já existe no sistema!", icon="🔔")
+                st.warning(f"⚠️ Atenção: O pedido {pedido} já foi lançado anteriormente!", icon="🔔")
         
         valor_txt = st.text_input(
             "Valor R$", 
@@ -297,6 +312,7 @@ def sistema_principal():
         retira = st.toggle("É Retira Posterior?")
         origem = st.text_input("Vínculo (Pedido Origem)") if retira else "-"
 
+        # BOTÃO COM CALLBACK PARA SALVAR SEM ERRO
         st.button(
             "💾 REGISTRAR VENDA", 
             type="primary", 
