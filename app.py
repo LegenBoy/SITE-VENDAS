@@ -7,7 +7,7 @@ import time
 
 # --- 1. CONFIGURAÇÃO DE CONEXÃO (SUPABASE) ---
 # TROQUE PELA SUA URL REAL DO SUPABASE
-DB_URL = "postgresql://postgres:[SUA_SENHA]@db.xyz.supabase.co:5432/postgres"
+DB_URL = "postgresql://postgres:!@#@Gabriel@@#!@db.buwezivkuvfkzyfozwnn.supabase.co:5432/postgres"
 
 def get_connection():
     return psycopg2.connect(DB_URL)
@@ -187,3 +187,4 @@ else:
                                 st.rerun()
             else:
                 st.success("Nenhuma entrega pendente.")
+
