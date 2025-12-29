@@ -55,44 +55,16 @@ def upload_imagem(arquivo):
         else: return None
     except Exception: return None
 
-# --- FORMATAÇÃO VISUAL ---
-def formatar_input_br():
-    if "valor_pendente" in st.session_state: 
-        chave = "valor_pendente"
-        if st.session_state.get(chave) is None: return
-    elif "valor_editar_pendente" in st.session_state: 
-        chave = "valor_editar_pendente"
-    else: return
-
-    valor = st.session_state[chave]
-    if not valor: return
-
-    try:
-        v_str = str(valor).replace("R$", "").strip()
-        if "," in v_str:
-            v_float = float(v_str.replace(".", "").replace(",", "."))
-        else:
-            v_float = float(v_str)
-
-        novo_valor = f"{v_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        st.session_state[chave] = novo_valor
-    except ValueError:
-        pass 
-
-# --- CONVERSÃO INTELIGENTE (FLOAT) ---
 def converter_para_float(valor_texto):
+    """Converte o texto digitado em número real para o banco de dados"""
     if not valor_texto: return 0.0
     v = str(valor_texto).replace("R$", "").strip()
-    
     if "," in v:
         v = v.replace(".", "").replace(",", ".")
-    elif "." in v:
-        if v.count(".") > 1: v = v.replace(".", "")
-            
     try: return float(v)
     except: return 0.0
 
-# --- CALLBACK DE SALVAMENTO ---
+# --- CALLBACK DE SALVAMENTO (AGORA COM LIMPEZA DE CAMPOS) ---
 def processar_salvamento(data, pedido, valor_txt, retira, origem, usuario_atual):
     valor_final = converter_para_float(valor_txt)
     
@@ -107,49 +79,28 @@ def processar_salvamento(data, pedido, valor_txt, retira, origem, usuario_atual)
         }
         
         if salvar_venda(nova): 
-            st.session_state["valor_pendente"] = ""
-            st.toast(f"✅ Venda de R$ {valor_final:,.2f} Salva!", icon="🚀")
-            time.sleep(1.5)
+            # LIMPEZA DOS CAMPOS: Reseta as chaves do session_state
+            st.session_state["input_pedido"] = ""
+            st.session_state["input_valor"] = ""
+            st.session_state["input_origem"] = ""
+            
+            st.toast(f"✅ Venda Salva!", icon="🚀")
+            time.sleep(1)
     else:
-        st.toast("❌ Erro: Valor zerado ou Pedido vazio.", icon="⚠️")
+        st.error("Preencha o Número do Pedido e o Valor corretamente.")
 
-# --- 4. FUNÇÕES DE BANCO DE DADOS (CORRIGIDA) ---
-def limpar_valor_vindo_do_sheets(valor):
-    """
-    Função Mágica: Corrige o problema de '1874,97' virar '187497'
-    Se vier texto com vírgula do Sheets, ela converte corretamente.
-    """
-    if isinstance(valor, (int, float)):
-        return float(valor)
-    
-    v = str(valor).strip()
-    if not v: return 0.0
-    
-    # Se tiver vírgula, é BRASIL. Tira ponto de milhar e troca vírgula por ponto.
-    if "," in v:
-        v = v.replace(".", "")  # Tira 1.000
-        v = v.replace(",", ".") # Vira 1000.00
-    
-    try:
-        return float(v)
-    except:
-        return 0.0
-
+# --- 4. FUNÇÕES DE BANCO DE DADOS ---
 def carregar_vendas():
     try:
         sh = conectar_gsheets()
         ws = sh.sheet1
         dados = ws.get_all_records()
         df = pd.DataFrame(dados)
-        colunas = ["Data", "Pedido", "Vendedor", "Retira_Posterior", "Valor", "Pedido_Origem"]
-        if df.empty: return pd.DataFrame(columns=colunas)
+        if df.empty: return pd.DataFrame(columns=["Data", "Pedido", "Vendedor", "Retira_Posterior", "Valor", "Pedido_Origem"])
         
         df['Pedido'] = df['Pedido'].astype(str)
-        
-        # AQUI ESTÁ A CORREÇÃO DE LEITURA
-        # Aplica a limpeza linha por linha antes de virar número
-        df['Valor'] = df['Valor'].apply(limpar_valor_vindo_do_sheets)
-        
+        # Limpeza para garantir que o dashboard mostre números certos
+        df['Valor'] = df['Valor'].apply(lambda x: float(str(x).replace('.','').replace(',','.')) if isinstance(x, str) and ',' in x else float(x))
         return df
     except: return pd.DataFrame()
 
@@ -157,20 +108,11 @@ def salvar_venda(nova_venda):
     try:
         sh = conectar_gsheets()
         ws = sh.sheet1
-        # Envia float puro para o Sheets tentar formatar como número
-        linha = [
-            str(nova_venda["Data"]), 
-            str(nova_venda["Pedido"]), 
-            nova_venda["Vendedor"], 
-            nova_venda["Retira_Posterior"], 
-            float(nova_venda["Valor"]), 
-            str(nova_venda["Pedido_Origem"])
-        ]
+        linha = [str(nova_venda["Data"]), str(nova_venda["Pedido"]), nova_venda["Vendedor"], 
+                 nova_venda["Retira_Posterior"], nova_venda["Valor"], str(nova_venda["Pedido_Origem"])]
         ws.append_row(linha)
         return True
-    except Exception as e:
-        print(e)
-        return False
+    except: return False
 
 def atualizar_venda(id_original, dados_novos):
     try:
@@ -200,16 +142,6 @@ def carregar_usuarios():
         return pd.DataFrame(ws.get_all_records())
     except: return pd.DataFrame(columns=["Usuario", "Senha", "Nome", "Funcao", "Foto_URL"])
 
-def criar_usuario(novo_user):
-    try:
-        sh = conectar_gsheets()
-        ws = sh.worksheet("Usuarios")
-        users = ws.col_values(1)
-        if novo_user["Usuario"] in users: return False, "Usuário já existe!"
-        ws.append_row([novo_user["Usuario"], novo_user["Senha"], novo_user["Nome"], novo_user["Funcao"], novo_user["Foto_URL"]])
-        return True, "Sucesso!"
-    except: return False, "Erro"
-
 # --- 5. LOGIN ---
 def autenticar(usuario, senha):
     df = carregar_usuarios()
@@ -237,55 +169,32 @@ def tela_login():
 # --- 6. MODAL EDIÇÃO ---
 @st.dialog("✏️ Editar Venda")
 def modal_editar_venda(pedido_selecionado, dados_atuais, lista_usuarios):
-    c1, c2 = st.columns(2)
     try: val_data = pd.to_datetime(dados_atuais['Data'], dayfirst=True).date() if isinstance(dados_atuais['Data'], str) else dados_atuais['Data']
     except: val_data = date.today()
     
-    nova_data = c1.date_input("Data", value=val_data)
-    novo_pedido = c2.text_input("Nº Pedido", value=dados_atuais['Pedido'])
+    nova_data = st.date_input("Data", value=val_data)
+    novo_pedido = st.text_input("Nº Pedido", value=dados_atuais['Pedido'])
     
-    # Previne erro na hora de exibir o valor atual
-    try:
-        val_float = float(dados_atuais['Valor'])
-    except:
-        val_float = 0.0
-        
-    valor_inicial = f"{val_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    novo_valor_txt = st.text_input("Valor (R$)", value=valor_inicial, key="valor_editar_pendente", on_change=formatar_input_br)
+    # Na edição, mostramos o valor atual como texto simples para você alterar
+    valor_atual_str = str(dados_atuais['Valor']).replace('.',',')
+    novo_valor_txt = st.text_input("Valor (Ex: 1500,50)", value=valor_atual_str)
     
     is_retira = True if dados_atuais['Retira_Posterior'] == "Sim" else False
     novo_retira = st.toggle("Retira Posterior?", value=is_retira)
     val_origem = dados_atuais['Pedido_Origem'] if dados_atuais['Pedido_Origem'] else ""
     novo_origem = st.text_input("Vínculo", value=val_origem)
     
-    if st.session_state['funcao'] == 'admin':
-        users = lista_usuarios['Usuario'].unique()
-        idx = 0
-        if dados_atuais['Vendedor'] in users: idx = list(users).index(dados_atuais['Vendedor'])
-        novo_vendedor = st.selectbox("Vendedor", users, index=idx)
-    else:
-        novo_vendedor = st.text_input("Vendedor", value=dados_atuais['Vendedor'], disabled=True)
-    
-    st.write("")
-    
     if st.button("💾 SALVAR ALTERAÇÕES", type="primary", use_container_width=True):
         v_final = converter_para_float(novo_valor_txt)
-        update = {"Data": nova_data, "Pedido": novo_pedido, "Vendedor": novo_vendedor, "Valor": v_final,
+        update = {"Data": nova_data, "Pedido": novo_pedido, "Vendedor": dados_atuais['Vendedor'], "Valor": v_final,
                   "Retira_Posterior": "Sim" if novo_retira else "Não", "Pedido_Origem": novo_origem if novo_retira else "-"}
-        
-        with st.spinner("Enviando para o Google Sheets..."):
-            if atualizar_venda(pedido_selecionado, update): 
-                st.success("Atualizado com sucesso!")
-                time.sleep(2) 
-                st.rerun()
+        if atualizar_venda(pedido_selecionado, update): 
+            st.success("Atualizado!")
+            time.sleep(1); st.rerun()
 
-    st.markdown("---")
     if st.button("🗑️ Excluir Venda", use_container_width=True):
-        with st.spinner("Excluindo..."):
-            if deletar_venda_sheet(pedido_selecionado): 
-                st.success("Apagado!")
-                time.sleep(2)
-                st.rerun()
+        if deletar_venda_sheet(pedido_selecionado): 
+            st.success("Apagado!"); time.sleep(1); st.rerun()
 
 # --- 7. SISTEMA PRINCIPAL ---
 def sistema_principal():
@@ -293,43 +202,34 @@ def sistema_principal():
         foto = st.session_state['foto'] if st.session_state['foto'] else "https://cdn-icons-png.flaticon.com/512/149/149071.png"
         st.image(foto, width=100)
         st.markdown(f"**{st.session_state['nome']}**")
-        st.caption(f"{st.session_state['funcao'].upper()}")
         st.divider()
         if st.button("🔄 Atualizar", use_container_width=True): st.rerun()
         if st.button("Sair", type="primary", use_container_width=True):
             st.session_state['logado'] = False; st.rerun()
 
     st.markdown("### 🚀 Painel MetaVendas")
-    with st.spinner("Carregando dados..."):
-        df_vendas = carregar_vendas()
-        df_usuarios = carregar_usuarios()
-
+    df_vendas = carregar_vendas()
+    
     if st.session_state['funcao'] == 'admin': df_completo = df_vendas
     else: df_completo = df_vendas[df_vendas['Vendedor'] == st.session_state['usuario']]
 
-    abas = ["📝 Lançar", "📋 Vendas"]
-    if st.session_state['funcao'] == 'admin': abas.append("⚙️ Equipe")
-    tabs = st.tabs(abas)
+    tabs = st.tabs(["📝 Lançar", "📋 Vendas"])
 
-    # ABA 1: LANÇAR
+    # ABA 1: LANÇAR (SIMPLIFICADA)
     with tabs[0]:
         data = st.date_input("Data", date.today())
         
-        pedido = st.text_input("Nº Pedido")
-        if pedido and not df_vendas.empty:
-            lista_pedidos = df_vendas['Pedido'].astype(str).tolist()
-            if pedido in lista_pedidos:
-                st.warning(f"⚠️ Atenção: O pedido {pedido} já foi lançado anteriormente!", icon="🔔")
+        # Uso de chaves (keys) para permitir a limpeza automática
+        pedido = st.text_input("Nº Pedido", key="input_pedido")
         
-        valor_txt = st.text_input(
-            "Valor R$", 
-            key="valor_pendente", 
-            on_change=formatar_input_br, 
-            placeholder="0,00"
-        )
+        if pedido and not df_vendas.empty:
+            if pedido in df_vendas['Pedido'].astype(str).tolist():
+                st.warning(f"⚠️ Pedido {pedido} já existe!")
+        
+        valor_txt = st.text_input("Valor (Ex: 1874,97)", key="input_valor")
         
         retira = st.toggle("É Retira Posterior?")
-        origem = st.text_input("Vínculo (Pedido Origem)") if retira else "-"
+        origem = st.text_input("Vínculo (Pedido Origem)", key="input_origem") if retira else "-"
 
         st.button(
             "💾 REGISTRAR VENDA", 
@@ -339,63 +239,20 @@ def sistema_principal():
             args=(data, pedido, valor_txt, retira, origem, st.session_state['usuario'])
         )
 
-    # ABA 2: LISTA DE CARDS
+    # ABA 2: VENDAS
     with tabs[1]:
-        with st.expander("🔍 Filtros de Busca"):
-            f_txt = st.text_input("Buscar Pedido")
-            lista_vendedores = df_completo['Vendedor'].unique().tolist()
-            if st.session_state['funcao'] == 'admin': f_vend = st.multiselect("Vendedor", options=lista_vendedores)
-            else: f_vend = [st.session_state['usuario']]
-
-        df_filtrado = df_completo.copy()
-        if f_txt: df_filtrado = df_filtrado[df_filtrado['Pedido'].str.contains(f_txt, case=False)]
-        if f_vend and st.session_state['funcao'] == 'admin': df_filtrado = df_filtrado[df_filtrado['Vendedor'].isin(f_vend)]
-        
-        if not df_filtrado.empty:
-            df_filtrado = df_filtrado.sort_index(ascending=False)
-            st.markdown(f"**{len(df_filtrado)} vendas encontradas**")
-            
-            # Loop de Cards
+        if not df_completo.empty:
+            df_filtrado = df_completo.sort_index(ascending=False)
             for index, row in df_filtrado.iterrows():
                 with st.container(border=True):
-                    c_top1, c_top2 = st.columns([2, 1])
-                    c_top1.markdown(f"<div class='card-title'>📦 {row['Pedido']}</div>", unsafe_allow_html=True)
-                    
-                    # Exibição do valor segura
-                    try:
-                        val_float = float(row['Valor'])
-                    except: val_float = 0.0
-                    
-                    valor_fmt = f"{val_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                    c_top2.markdown(f"<div class='card-valor'>R$ {valor_fmt}</div>", unsafe_allow_html=True)
-                    
-                    c_mid1, c_mid2, c_mid3 = st.columns([1, 1, 1])
-                    c_mid1.caption(f"📅 {row['Data']}")
-                    c_mid2.caption(f"👤 {row['Vendedor']}")
-                    
-                    if row['Retira_Posterior'] == "Sim": c_mid3.markdown("⚠️ **Retira**")
-                    else: c_mid3.markdown("✅ **Normal**")
-                    
-                    if row['Pedido_Origem'] and row['Pedido_Origem'] != "-":
-                        st.caption(f"🔗 Vínculo: {row['Pedido_Origem']}")
-                    
-                    if st.button("✏️ Editar", key=f"btn_{row['Pedido']}_{index}", use_container_width=True):
-                        modal_editar_venda(row['Pedido'], row, df_usuarios)
-        else:
-            st.info("Nenhuma venda encontrada.")
-
-    # ABA 3: ADMIN
-    if st.session_state['funcao'] == 'admin':
-        with tabs[2]:
-            st.write("Cadastro Rápido")
-            with st.form("novo_user"):
-                u = st.text_input("Usuário"); s = st.text_input("Senha")
-                n = st.text_input("Nome"); r = st.selectbox("Função", ["vendedor", "admin"])
-                f = st.file_uploader("Foto")
-                if st.form_submit_button("Salvar", use_container_width=True):
-                    url = upload_imagem(f) if f else ""
-                    ok, m = criar_usuario({"Usuario": u, "Senha": s, "Nome": n, "Funcao": r, "Foto_URL": url})
-                    if ok: st.success(m)
+                    c1, c2 = st.columns([2, 1])
+                    c1.markdown(f"<div class='card-title'>📦 {row['Pedido']}</div>", unsafe_allow_html=True)
+                    valor_fmt = f"R$ {float(row['Valor']):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                    c2.markdown(f"<div class='card-valor'>{valor_fmt}</div>", unsafe_allow_html=True)
+                    st.caption(f"📅 {row['Data']} | 👤 {row['Vendedor']}")
+                    if st.button("✏️ Detalhes", key=f"btn_{index}", use_container_width=True):
+                        modal_editar_venda(row['Pedido'], row, None)
+        else: st.info("Sem vendas.")
 
 # --- 8. INICIALIZAÇÃO ---
 if 'logado' not in st.session_state: st.session_state['logado'] = False
