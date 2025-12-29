@@ -5,29 +5,35 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import time
 
-# --- 1. CONFIGURAÇÃO DE CONEXÃO (SEGURA) ---
-# Separamos os dados para que caracteres especiais na senha não quebrem a URL
+# --- 1. CONFIGURAÇÃO DE CONEXÃO (SEGURA E RESILIENTE) ---
+# Usamos a porta 6543 (Pooler) para evitar erros de rede e IPv6
 DB_CONFIG = {
     "host": "db.buwezivkuvfkzyfozwnn.supabase.co",
     "database": "postgres",
     "user": "postgres",
-    "password": "!@#@Gabriel@@#!",  # Sua senha agora é tratada como texto puro
-    "port": "5432"
+    "password": "!@#@Gabriel@@#!", 
+    "port": "6543",
+    "sslmode": "require",
+    "connect_timeout": 10
 }
 
 def get_connection():
-    # Conexão usando dicionário é mais segura para senhas com símbolos
-    return psycopg2.connect(**DB_CONFIG)
+    try:
+        return psycopg2.connect(**DB_CONFIG)
+    except Exception as e:
+        st.error(f"Erro Crítico de Conexão: {e}")
+        return None
 
 # --- 2. FUNÇÕES DE BANCO DE DADOS ---
 
 def verificar_login_banco(usuario_digitado, senha_digitada):
+    conn = get_connection()
+    if not conn: return None
     try:
-        conn = get_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        # TRIM remove espaços acidentais no banco de dados
+        # TRIM e lower() garantem que espaços ou maiúsculas não bloqueiem o login
         query = "SELECT * FROM usuarios WHERE TRIM(usuario) = %s"
-        cur.execute(query, (usuario_digitado.strip(),))
+        cur.execute(query, (usuario_digitado.strip().lower(),))
         user_data = cur.fetchone()
         cur.close()
         conn.close()
@@ -35,24 +41,23 @@ def verificar_login_banco(usuario_digitado, senha_digitada):
         if user_data and str(user_data['senha']).strip() == str(senha_digitada).strip():
             return user_data
         return None
-    except Exception as e:
-        st.error(f"Erro de conexão: {e}")
+    except:
         return None
 
 def carregar_vendas_banco():
+    conn = get_connection()
+    if not conn: return pd.DataFrame()
     try:
-        conn = get_connection()
-        # O pandas usa a conexão segura para ler os dados
         df = pd.read_sql("SELECT * FROM vendas ORDER BY id DESC", conn)
         conn.close()
         return df
-    except Exception as e:
-        st.error(f"Erro ao carregar vendas: {e}")
+    except:
         return pd.DataFrame()
 
 def salvar_venda_banco(nova):
+    conn = get_connection()
+    if not conn: return False
     try:
-        conn = get_connection()
         cur = conn.cursor()
         query = """
             INSERT INTO vendas (data, pedido, vendedor, retira_posterior, valor, pedido_origem) 
@@ -64,13 +69,13 @@ def salvar_venda_banco(nova):
         cur.close()
         conn.close()
         return True
-    except Exception as e:
-        st.error(f"Erro ao salvar: {e}")
+    except:
         return False
 
 def atualizar_status_entrega(id_venda, status):
+    conn = get_connection()
+    if not conn: return False
     try:
-        conn = get_connection()
         cur = conn.cursor()
         cur.execute("UPDATE vendas SET retira_posterior = %s WHERE id = %s", (status, id_venda))
         conn.commit()
@@ -101,7 +106,7 @@ if 'logado' not in st.session_state:
 if not st.session_state['logado']:
     st.title("🔐 Acesso ao Sistema")
     with st.container(border=True):
-        u_in = st.text_input("Usuário").lower()
+        u_in = st.text_input("Usuário")
         s_in = st.text_input("Senha", type="password")
         
         if st.button("Entrar", use_container_width=True):
@@ -113,7 +118,7 @@ if not st.session_state['logado']:
                     'nome': user['nome'], 
                     'funcao': user['funcao']
                 })
-                st.success("Login realizado!")
+                st.success("Bem-vindo!")
                 time.sleep(0.5)
                 st.rerun()
             else:
@@ -127,6 +132,7 @@ else:
 
     tab1, tab2, tab3 = st.tabs(["📝 Lançar Venda", "📋 Relatório", "📦 Retira Posterior"])
 
+    # ABA 1: LANÇAR
     with tab1:
         st.subheader("Novo Registro")
         with st.container(border=True):
@@ -136,7 +142,7 @@ else:
             df_v = carregar_vendas_banco()
             if ped_v and not df_v.empty:
                 if str(ped_v) in df_v['pedido'].astype(str).tolist():
-                    st.warning("⚠️ Pedido já cadastrado!")
+                    st.warning("⚠️ Pedido já cadastrado anteriormente!")
 
             val_v = st.text_input("Valor (Ex: 1874,97)", key="f_valor")
             ret_v = st.toggle("Retira Posterior?")
@@ -154,12 +160,13 @@ else:
                         st.session_state["f_pedido"] = ""
                         st.session_state["f_valor"] = ""
                         if "f_origem" in st.session_state: st.session_state["f_origem"] = ""
-                        st.success("✅ Salvo!")
+                        st.success("✅ Venda registrada no banco!")
                         time.sleep(1)
                         st.rerun()
                 else:
                     st.error("Preencha pedido e valor.")
 
+    # ABA 2: RELATÓRIO
     with tab2:
         st.subheader("Histórico de Vendas")
         df_rel = carregar_vendas_banco()
@@ -171,10 +178,11 @@ else:
             st.metric("Total Vendido", f"R$ {total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
             st.dataframe(df_rel, use_container_width=True, hide_index=True)
         else:
-            st.info("Nada encontrado.")
+            st.info("Nenhuma venda encontrada no banco.")
 
+    # ABA 3: RETIRA
     with tab3:
-        st.subheader("Pedidos para Retirada")
+        st.subheader("Pedidos Pendentes")
         df_ret = carregar_vendas_banco()
         if not df_ret.empty:
             pendentes = df_ret[df_ret['retira_posterior'] == 'Sim']
@@ -182,11 +190,11 @@ else:
                 for _, r in pendentes.iterrows():
                     with st.container(border=True):
                         c1, c2, c3 = st.columns([2,2,1])
-                        c1.write(f"**Ped: {r['pedido']}**")
+                        c1.write(f"**Pedido: {r['pedido']}**")
                         c1.caption(f"Vendedor: {r['vendedor']}")
-                        c2.write(f"Origem: {r['pedido_origem']}")
+                        c2.write(f"Vínculo: {r['pedido_origem']}")
                         if c3.button("✅ Entregue", key=f"btn_{r['id']}"):
                             if atualizar_status_entrega(r['id'], 'Entregue'):
                                 st.rerun()
             else:
-                st.success("Nenhuma entrega pendente.")
+                st.success("Tudo em dia! Nenhuma retirada pendente.")
