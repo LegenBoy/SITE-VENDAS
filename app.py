@@ -186,6 +186,13 @@ def criar_usuario(novo_user):
         return True, "Sucesso!"
     except: return False, "Erro"
 
+# --- FUNÇÃO EXTRA: ALTERAR STATUS RETIRA ---
+def alterar_status_retira(pedido, dados_row, novo_status):
+    dados_novos = dados_row.to_dict()
+    dados_novos['Retira_Posterior'] = novo_status
+    if atualizar_venda(pedido, dados_novos):
+        st.toast(f"Status atualizado para: {novo_status}")
+
 # --- 5. LOGIN ---
 def autenticar(usuario, senha):
     df = carregar_usuarios()
@@ -229,7 +236,7 @@ def modal_editar_venda(pedido_selecionado, dados_atuais, lista_usuarios):
     valor_inicial = f"{val_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     novo_valor_txt = st.text_input("Valor (R$)", value=valor_inicial, key="valor_editar_pendente")
     
-    is_retira = True if dados_atuais['Retira_Posterior'] == "Sim" else False
+    is_retira = True if dados_atuais['Retira_Posterior'] in ["Sim", "Entregue"] else False
     novo_retira = st.toggle("Retira Posterior?", value=is_retira)
     val_origem = dados_atuais['Pedido_Origem'] if dados_atuais['Pedido_Origem'] else ""
     novo_origem = st.text_input("Vínculo", value=val_origem)
@@ -246,8 +253,14 @@ def modal_editar_venda(pedido_selecionado, dados_atuais, lista_usuarios):
     
     if st.button("💾 SALVAR ALTERAÇÕES", type="primary", use_container_width=True):
         v_final = converter_para_float(novo_valor_txt)
+        
+        # Lógica para manter o status "Entregue" se não foi desmarcado
+        status_final = "Não"
+        if novo_retira:
+            status_final = dados_atuais['Retira_Posterior'] if dados_atuais['Retira_Posterior'] in ["Sim", "Entregue"] else "Sim"
+
         update = {"Data": nova_data, "Pedido": novo_pedido, "Vendedor": novo_vendedor, "Valor": v_final,
-                  "Retira_Posterior": "Sim" if novo_retira else "Não", "Pedido_Origem": novo_origem if novo_retira else "-"}
+                  "Retira_Posterior": status_final, "Pedido_Origem": novo_origem if novo_retira else "-"}
         
         with st.spinner("Enviando para o Google Sheets..."):
             if atualizar_venda(pedido_selecionado, update): 
@@ -283,7 +296,7 @@ def sistema_principal():
     if st.session_state['funcao'] == 'admin': df_completo = df_vendas
     else: df_completo = df_vendas[df_vendas['Vendedor'] == st.session_state['usuario']]
 
-    abas = ["📝 Lançar", "📋 Vendas"]
+    abas = ["📝 Lançar", "📋 Vendas", "📦 Retira"]
     if st.session_state['funcao'] == 'admin': abas.append("⚙️ Equipe")
     tabs = st.tabs(abas)
 
@@ -359,9 +372,46 @@ def sistema_principal():
         else:
             st.info("Nenhuma venda encontrada.")
 
-    # ABA 3: ADMIN
+    # ABA 3: RETIRA POSTERIOR (NOVA)
+    with tabs[2]:
+        st.markdown("### Controle de Entregas (Retira Posterior)")
+        
+        # Filtra apenas o que é Retira (Sim ou Entregue)
+        # Mostramos TODAS as retiras da loja para facilitar a operação, ou filtra se preferir
+        # Aqui estou usando df_vendas (geral) para que qualquer um possa dar baixa se necessário, 
+        # mas você pode mudar para df_completo se quiser restringir.
+        df_retira = df_vendas[df_vendas['Retira_Posterior'].isin(['Sim', 'Entregue'])].copy()
+        
+        if not df_retira.empty:
+            pendentes = df_retira[df_retira['Retira_Posterior'] == 'Sim']
+            entregues = df_retira[df_retira['Retira_Posterior'] == 'Entregue']
+            
+            st.markdown(f"**⏳ Pendentes ({len(pendentes)})**")
+            for idx, row in pendentes.iterrows():
+                with st.container(border=True):
+                    c1, c2, c3 = st.columns([2, 2, 1])
+                    c1.markdown(f"**Pedido:** {row['Pedido']}")
+                    c1.caption(f"👤 {row['Vendedor']} | 📅 {row['Data']}")
+                    c2.write(f"Origem: {row['Pedido_Origem']}")
+                    if c3.button("✅ Entregar", key=f"ent_{row['Pedido']}"):
+                        alterar_status_retira(row['Pedido'], row, "Entregue")
+                        time.sleep(1); st.rerun()
+            
+            st.divider()
+            with st.expander(f"✅ Histórico de Entregues ({len(entregues)})"):
+                for idx, row in entregues.iterrows():
+                    c1, c2, c3 = st.columns([2, 2, 1])
+                    c1.write(f"📦 {row['Pedido']} ({row['Vendedor']})")
+                    c2.caption(f"Entregue")
+                    if c3.button("↩️ Desfazer", key=f"desf_{row['Pedido']}"):
+                        alterar_status_retira(row['Pedido'], row, "Sim")
+                        time.sleep(1); st.rerun()
+        else:
+            st.info("Nenhum pedido para retirada encontrado.")
+
+    # ABA 4: ADMIN
     if st.session_state['funcao'] == 'admin':
-        with tabs[2]:
+        with tabs[3]:
             st.write("Cadastro Rápido")
             with st.form("novo_user"):
                 u = st.text_input("Usuário"); s = st.text_input("Senha")
