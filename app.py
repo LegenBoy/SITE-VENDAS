@@ -55,57 +55,45 @@ def upload_imagem(arquivo):
         else: return None
     except Exception: return None
 
-# --- NOVA LÓGICA DE FORMATAÇÃO (BLINDADA) ---
+# --- LÓGICA DE FORMATAÇÃO AUTOMÁTICA ---
 def formatar_input_br():
     """Formata visualmente o campo quando o usuário aperta Enter"""
-    if "valor_pendente" in st.session_state: chave = "valor_pendente"
-    elif "valor_editar_pendente" in st.session_state: chave = "valor_editar_pendente"
+    # Identifica qual campo chamou a função
+    if "valor_pendente" in st.session_state: 
+        chave = "valor_pendente"
+        # Pequena lógica para evitar loop se a chave não foi a trigger
+        if st.session_state.get(chave) is None: return
+    elif "valor_editar_pendente" in st.session_state: 
+        chave = "valor_editar_pendente"
     else: return
 
     valor = st.session_state[chave]
     if not valor: return
 
     try:
-        # Limpa R$ e espaços
         v_str = str(valor).replace("R$", "").strip()
         
-        # Lógica inteligente para aceitar ponto ou virgula
+        # Lógica para aceitar ponto ou virgula
         if "," in v_str:
-            # Padrão BR (1.000,00) -> Tira ponto, troca virgula por ponto
             v_float = float(v_str.replace(".", "").replace(",", "."))
         else:
-            # Padrão US ou erro (1000.00) -> Aceita o ponto como decimal
             v_float = float(v_str)
 
-        # Formata de volta para visual BR bonitinho (1.000,00)
+        # Formata de volta para visual BR (1.000,00)
         novo_valor = f"{v_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
         st.session_state[chave] = novo_valor
     except ValueError:
         pass 
 
 def converter_para_float(valor_texto):
-    """
-    Função corrigida para não multiplicar por 100 se usar ponto.
-    Aceita: "1.874,97", "1874,97" e até "1874.97"
-    """
+    """Converte texto formatado para float seguro para o banco"""
     if not valor_texto: return 0.0
-    
     v = str(valor_texto).replace("R$", "").strip()
     
-    # Se tem vírgula, assumimos que é decimal BR (O caso mais comum)
     if "," in v:
-        v = v.replace(".", "") # Remove milhares (1.000 -> 1000)
-        v = v.replace(",", ".") # Virgula vira ponto (1000,50 -> 1000.50)
-    
-    # Se NÃO tem vírgula, mas tem ponto (Ex: 1874.97)
-    # Antes isso virava 187497. Agora vamos aceitar como decimal.
+        v = v.replace(".", "").replace(",", ".")
     elif "." in v:
-        # Se tiver apenas um ponto, tratamos como decimal
-        if v.count(".") == 1:
-            pass # Já está certo (1874.97)
-        else:
-            # Se tiver vários pontos (1.000.000), aí sim tiramos
-            v = v.replace(".", "")
+        if v.count(".") > 1: v = v.replace(".", "")
             
     try: return float(v)
     except: return 0.0
@@ -198,43 +186,45 @@ def tela_login():
                     st.rerun()
                 else: st.error("Incorreto.")
 
-# --- 6. MODAL EDIÇÃO ---
+# --- 6. MODAL EDIÇÃO (CORRIGIDO: SEM ST.FORM) ---
 @st.dialog("✏️ Editar Venda")
 def modal_editar_venda(pedido_selecionado, dados_atuais, lista_usuarios):
-    with st.form("form_edicao_modal"):
-        c1, c2 = st.columns(2)
-        try: val_data = pd.to_datetime(dados_atuais['Data'], dayfirst=True).date() if isinstance(dados_atuais['Data'], str) else dados_atuais['Data']
-        except: val_data = date.today()
-        
-        nova_data = c1.date_input("Data", value=val_data)
-        novo_pedido = c2.text_input("Nº Pedido", value=dados_atuais['Pedido'])
-        
-        # Valor formatado para edição
-        valor_inicial = f"{float(dados_atuais['Valor']):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        
-        # Key para formatação automática na edição
-        novo_valor_txt = st.text_input("Valor (R$)", value=valor_inicial, key="valor_editar_pendente", on_change=formatar_input_br)
-        
-        is_retira = True if dados_atuais['Retira_Posterior'] == "Sim" else False
-        novo_retira = st.toggle("Retira Posterior?", value=is_retira)
-        val_origem = dados_atuais['Pedido_Origem'] if dados_atuais['Pedido_Origem'] else ""
-        novo_origem = st.text_input("Vínculo", value=val_origem)
-        
-        if st.session_state['funcao'] == 'admin':
-            users = lista_usuarios['Usuario'].unique()
-            idx = 0
-            if dados_atuais['Vendedor'] in users: idx = list(users).index(dados_atuais['Vendedor'])
-            novo_vendedor = st.selectbox("Vendedor", users, index=idx)
-        else:
-            novo_vendedor = st.text_input("Vendedor", value=dados_atuais['Vendedor'], disabled=True)
-        
-        if st.form_submit_button("💾 Salvar", type="primary", use_container_width=True):
-            # Converte usando a função blindada
-            v_final = converter_para_float(novo_valor_txt)
-            update = {"Data": nova_data, "Pedido": novo_pedido, "Vendedor": novo_vendedor, "Valor": v_final,
-                      "Retira_Posterior": "Sim" if novo_retira else "Não", "Pedido_Origem": novo_origem if novo_retira else "-"}
-            with st.spinner("..."):
-                if atualizar_venda(pedido_selecionado, update): st.success("Ok!"); time.sleep(1); st.rerun()
+    # ATENÇÃO: Removemos o st.form aqui para o on_change funcionar
+    c1, c2 = st.columns(2)
+    try: val_data = pd.to_datetime(dados_atuais['Data'], dayfirst=True).date() if isinstance(dados_atuais['Data'], str) else dados_atuais['Data']
+    except: val_data = date.today()
+    
+    nova_data = c1.date_input("Data", value=val_data)
+    novo_pedido = c2.text_input("Nº Pedido", value=dados_atuais['Pedido'])
+    
+    # Valor formatado para edição
+    valor_inicial = f"{float(dados_atuais['Valor']):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    
+    # Key para formatação automática na edição
+    novo_valor_txt = st.text_input("Valor (R$)", value=valor_inicial, key="valor_editar_pendente", on_change=formatar_input_br)
+    
+    is_retira = True if dados_atuais['Retira_Posterior'] == "Sim" else False
+    novo_retira = st.toggle("Retira Posterior?", value=is_retira)
+    val_origem = dados_atuais['Pedido_Origem'] if dados_atuais['Pedido_Origem'] else ""
+    novo_origem = st.text_input("Vínculo", value=val_origem)
+    
+    if st.session_state['funcao'] == 'admin':
+        users = lista_usuarios['Usuario'].unique()
+        idx = 0
+        if dados_atuais['Vendedor'] in users: idx = list(users).index(dados_atuais['Vendedor'])
+        novo_vendedor = st.selectbox("Vendedor", users, index=idx)
+    else:
+        novo_vendedor = st.text_input("Vendedor", value=dados_atuais['Vendedor'], disabled=True)
+    
+    st.write("") # Espaço
+    
+    # Botão Normal (não é mais form_submit_button)
+    if st.button("💾 SALVAR ALTERAÇÕES", type="primary", use_container_width=True):
+        v_final = converter_para_float(novo_valor_txt)
+        update = {"Data": nova_data, "Pedido": novo_pedido, "Vendedor": novo_vendedor, "Valor": v_final,
+                  "Retira_Posterior": "Sim" if novo_retira else "Não", "Pedido_Origem": novo_origem if novo_retira else "-"}
+        with st.spinner("..."):
+            if atualizar_venda(pedido_selecionado, update): st.success("Ok!"); time.sleep(1); st.rerun()
 
     st.markdown("---")
     if st.button("🗑️ Excluir Venda", use_container_width=True):
@@ -264,12 +254,11 @@ def sistema_principal():
     if st.session_state['funcao'] == 'admin': abas.append("⚙️ Equipe")
     tabs = st.tabs(abas)
 
-    # ABA 1: LANÇAR
+    # ABA 1: LANÇAR (COM FORMATAÇÃO)
     with tabs[0]:
         data = st.date_input("Data", date.today())
         pedido = st.text_input("Nº Pedido")
         
-        # CAMPO DE VALOR INTELIGENTE
         valor_txt = st.text_input(
             "Valor R$", 
             key="valor_pendente", 
@@ -281,14 +270,13 @@ def sistema_principal():
         origem = st.text_input("Vínculo (Pedido Origem)") if retira else "-"
 
         if st.button("💾 REGISTRAR VENDA", type="primary", use_container_width=True):
-            # Usa a conversão segura
             valor_final = converter_para_float(valor_txt)
             
             if pedido and valor_final > 0:
                 nova = {"Data": data, "Pedido": pedido, "Vendedor": st.session_state['usuario'],
                         "Retira_Posterior": "Sim" if retira else "Não", "Valor": valor_final, "Pedido_Origem": origem}
                 if salvar_venda(nova): 
-                    st.session_state["valor_pendente"] = "" # Limpa campo
+                    st.session_state["valor_pendente"] = ""
                     st.success("Salvo!"); time.sleep(1); st.rerun()
             else: st.error("Valor inválido ou Pedido vazio.")
 
@@ -312,7 +300,6 @@ def sistema_principal():
                 with st.container(border=True):
                     c_top1, c_top2 = st.columns([2, 1])
                     c_top1.markdown(f"<div class='card-title'>📦 {row['Pedido']}</div>", unsafe_allow_html=True)
-                    
                     valor_fmt = f"{row['Valor']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                     c_top2.markdown(f"<div class='card-valor'>R$ {valor_fmt}</div>", unsafe_allow_html=True)
                     
