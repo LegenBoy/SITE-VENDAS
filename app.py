@@ -173,6 +173,14 @@ def modal_editar_venda(pedido_selecionado, dados_atuais, lista_usuarios):
     except: val_data = date.today()
     
     nova_data = st.date_input("Data", value=val_data)
+    
+    novo_vendedor = dados_atuais['Vendedor']
+    if lista_usuarios:
+        idx = lista_usuarios.index(novo_vendedor) if novo_vendedor in lista_usuarios else 0
+        novo_vendedor = st.selectbox("Vendedor", lista_usuarios, index=idx)
+    else:
+        st.text_input("Vendedor", value=novo_vendedor, disabled=True)
+
     novo_pedido = st.text_input("Nº Pedido", value=dados_atuais['Pedido'])
     
     # Na edição, mostramos o valor atual como texto simples para você alterar
@@ -186,7 +194,7 @@ def modal_editar_venda(pedido_selecionado, dados_atuais, lista_usuarios):
     
     if st.button("💾 SALVAR ALTERAÇÕES", type="primary", use_container_width=True):
         v_final = converter_para_float(novo_valor_txt)
-        update = {"Data": nova_data, "Pedido": novo_pedido, "Vendedor": dados_atuais['Vendedor'], "Valor": v_final,
+        update = {"Data": nova_data, "Pedido": novo_pedido, "Vendedor": novo_vendedor, "Valor": v_final,
                   "Retira_Posterior": "Sim" if novo_retira else "Não", "Pedido_Origem": novo_origem if novo_retira else "-"}
         if atualizar_venda(pedido_selecionado, update): 
             st.success("Atualizado!")
@@ -207,6 +215,12 @@ def sistema_principal():
         if st.button("Sair", type="primary", use_container_width=True):
             st.session_state['logado'] = False; st.rerun()
 
+    lista_usuarios = []
+    if st.session_state['funcao'] == 'admin':
+        df_users = carregar_usuarios()
+        if not df_users.empty:
+            lista_usuarios = df_users['Usuario'].tolist()
+
     st.markdown("### 🚀 Painel MetaVendas")
     df_vendas = carregar_vendas()
     
@@ -218,6 +232,10 @@ def sistema_principal():
     # ABA 1: LANÇAR (SIMPLIFICADA)
     with tabs[0]:
         data = st.date_input("Data", date.today())
+        
+        usuario_lancamento = st.session_state['usuario']
+        if lista_usuarios:
+            usuario_lancamento = st.selectbox("Vendedor", lista_usuarios, index=lista_usuarios.index(usuario_lancamento) if usuario_lancamento in lista_usuarios else 0)
         
         # Uso de chaves (keys) para permitir a limpeza automática
         pedido = st.text_input("Nº Pedido", key="input_pedido")
@@ -236,7 +254,7 @@ def sistema_principal():
             type="primary", 
             use_container_width=True,
             on_click=processar_salvamento,
-            args=(data, pedido, valor_txt, retira, origem, st.session_state['usuario'])
+            args=(data, pedido, valor_txt, retira, origem, usuario_lancamento)
         )
 
     # ABA 2: VENDAS
@@ -251,7 +269,7 @@ def sistema_principal():
                     c2.markdown(f"<div class='card-valor'>{valor_fmt}</div>", unsafe_allow_html=True)
                     st.caption(f"📅 {row['Data']} | 👤 {row['Vendedor']}")
                     if st.button("✏️ Detalhes", key=f"btn_{index}", use_container_width=True):
-                        modal_editar_venda(row['Pedido'], row, None)
+                        modal_editar_venda(row['Pedido'], row, lista_usuarios)
         else: st.info("Sem vendas.")
 
 # --- 8. INICIALIZAÇÃO ---
