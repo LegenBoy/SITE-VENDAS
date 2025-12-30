@@ -103,6 +103,13 @@ def carregar_usuarios():
         return pd.DataFrame(ws.get_all_records())
     except: return pd.DataFrame(columns=["Usuario", "Senha", "Nome", "Funcao", "Foto_URL"])
 
+# --- FUNÇÃO EXTRA: ALTERAR STATUS RETIRA ---
+def alterar_status_retira(pedido, dados_row, novo_status):
+    dados_novos = dados_row.to_dict()
+    dados_novos['Retira_Posterior'] = novo_status
+    if atualizar_venda(pedido, dados_novos):
+        st.toast(f"Status atualizado para: {novo_status}")
+
 # --- CALLBACK DE SALVAMENTO COM LIMPEZA ---
 def processar_salvamento():
     # Coleta dados dos inputs via session_state
@@ -112,6 +119,9 @@ def processar_salvamento():
     retira = st.session_state.form_retira
     origem = st.session_state.form_origem if retira else "-"
     usuario_atual = st.session_state['usuario_nome_sistema']
+    
+    if st.session_state.get('funcao') == 'admin' and st.session_state.get('form_vendedor'):
+        usuario_atual = st.session_state['form_vendedor']
 
     valor_final = converter_para_float(valor_txt)
     
@@ -161,12 +171,18 @@ else:
         st.session_state['logado'] = False
         st.rerun()
 
-    tab1, tab2 = st.tabs(["📝 Lançar Venda", "📋 Ver Relatório"])
+    tab1, tab2, tab3 = st.tabs(["📝 Lançar Venda", "📋 Ver Relatório", "📦 Retira Posterior"])
 
     with tab1:
         st.subheader("Novo Lançamento")
         with st.container(border=True):
             st.date_input("Data", date.today(), key="form_data")
+            
+            if st.session_state['funcao'] == 'admin':
+                df_u = carregar_usuarios()
+                lista_nomes = df_u['Nome'].tolist() if not df_u.empty else [st.session_state['usuario_nome_sistema']]
+                st.selectbox("Vendedor", lista_nomes, key="form_vendedor")
+            
             st.text_input("Nº Pedido", key="form_pedido")
             st.text_input("Valor (Ex: 1874,97)", key="form_valor")
             st.toggle("Retira Posterior?", key="form_retira")
@@ -188,5 +204,75 @@ else:
             total = df_vendas['Valor'].sum()
             st.metric("Total Vendido", f"R$ {total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
             st.dataframe(df_vendas, use_container_width=True, hide_index=True)
+            
+            # --- ÁREA DE EDIÇÃO (TRANSFERÊNCIA) ---
+            if st.session_state['funcao'] == 'admin':
+                st.divider()
+                st.markdown("### ✏️ Editar / Transferir Venda")
+                pedidos_lista = df_vendas['Pedido'].unique().tolist()
+                pedido_selecionado = st.selectbox("Selecione o Pedido para Editar", [""] + pedidos_lista)
+                
+                if pedido_selecionado:
+                    row = df_vendas[df_vendas['Pedido'] == pedido_selecionado].iloc[0]
+                    with st.form("form_editar"):
+                        c1, c2 = st.columns(2)
+                        n_data = c1.text_input("Data (YYYY-MM-DD)", value=row['Data'])
+                        
+                        # Admin pode trocar o vendedor
+                        df_u = carregar_usuarios()
+                        lista_nomes = df_u['Nome'].tolist() if not df_u.empty else [row['Vendedor']]
+                        idx_v = lista_nomes.index(row['Vendedor']) if row['Vendedor'] in lista_nomes else 0
+                        n_vendedor = c2.selectbox("Vendedor", lista_nomes, index=idx_v)
+                        
+                        n_valor = c1.text_input("Valor", value=row['Valor'])
+                        n_retira = c2.selectbox("Retira?", ["Sim", "Não", "Entregue"], index=["Sim", "Não", "Entregue"].index(row['Retira_Posterior']))
+                        n_origem = st.text_input("Origem", value=row['Pedido_Origem'])
+                        
+                        if st.form_submit_button("💾 Salvar Alterações"):
+                            dados_up = {
+                                "Data": n_data, "Pedido": pedido_selecionado, "Vendedor": n_vendedor,
+                                "Retira_Posterior": n_retira, "Valor": converter_para_float(n_valor), "Pedido_Origem": n_origem
+                            }
+                            if atualizar_venda(pedido_selecionado, dados_up):
+                                st.success("Atualizado!")
+                                time.sleep(1)
+                                st.rerun()
         else:
             st.info("Nenhuma venda encontrada.")
+
+    with tab3:
+        st.subheader("Controle de Entregas (Retira)")
+        df_all = carregar_vendas()
+        if not df_all.empty:
+            # Admin vê tudo, Vendedor vê só as suas (ou tudo se preferir)
+            if st.session_state['funcao'] != 'admin':
+                df_retira = df_all[(df_all['Vendedor'] == st.session_state['usuario_nome_sistema']) & (df_all['Retira_Posterior'].isin(['Sim', 'Entregue']))]
+            else:
+                df_retira = df_all[df_all['Retira_Posterior'].isin(['Sim', 'Entregue'])]
+            
+            if not df_retira.empty:
+                pendentes = df_retira[df_retira['Retira_Posterior'] == 'Sim']
+                entregues = df_retira[df_retira['Retira_Posterior'] == 'Entregue']
+                
+                st.markdown(f"**⏳ Pendentes ({len(pendentes)})**")
+                for i, r in pendentes.iterrows():
+                    c1, c2, c3 = st.columns([3, 2, 1])
+                    c1.write(f"📦 **{r['Pedido']}** - {r['Vendedor']}")
+                    c2.write(f"📅 {r['Data']}")
+                    if c3.button("✅ Entregar", key=f"btn_ent_{r['Pedido']}"):
+                        alterar_status_retira(r['Pedido'], r, "Entregue")
+                        time.sleep(0.5); st.rerun()
+                
+                st.divider()
+                with st.expander(f"✅ Histórico de Entregues ({len(entregues)})"):
+                    for i, r in entregues.iterrows():
+                        c1, c2, c3 = st.columns([3, 2, 1])
+                        c1.write(f"📦 {r['Pedido']} - {r['Vendedor']}")
+                        c2.caption("Entregue")
+                        if c3.button("↩️ Desfazer", key=f"btn_des_{r['Pedido']}"):
+                            alterar_status_retira(r['Pedido'], r, "Sim")
+                            time.sleep(0.5); st.rerun()
+            else:
+                st.info("Nenhum item para retirada.")
+        else:
+            st.info("Sem dados.")
