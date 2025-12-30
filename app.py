@@ -261,8 +261,8 @@ else:
                 st.markdown(f"**⏳ Pendentes ({len(pendentes)})**")
                 for i, r in pendentes.iterrows():
                     c1, c2, c3 = st.columns([3, 2, 1])
-                    c1.write(f"📦 **{r['Pedido']}** - {r['Vendedor']}")
-                    c2.write(f"📅 {r['Data']}")
+                    c1.markdown(f"📦 **{r['Pedido']}**<br>👤 {r['Vendedor']}", unsafe_allow_html=True)
+                    c2.markdown(f"📅 {r['Data']}<br>🔗 {r['Pedido_Origem']}", unsafe_allow_html=True)
                     if c3.button("✅ Entregar", key=f"btn_ent_{r['Pedido']}"):
                         alterar_status_retira(r['Pedido'], r, "Entregue")
                         time.sleep(0.5); st.rerun()
@@ -271,8 +271,8 @@ else:
                 with st.expander(f"✅ Histórico de Entregues ({len(entregues)})"):
                     for i, r in entregues.iterrows():
                         c1, c2, c3 = st.columns([3, 2, 1])
-                        c1.write(f"📦 {r['Pedido']} - {r['Vendedor']}")
-                        c2.caption("Entregue")
+                        c1.markdown(f"📦 **{r['Pedido']}**<br>👤 {r['Vendedor']}", unsafe_allow_html=True)
+                        c2.markdown(f"📅 {r['Data']}<br>🔗 {r['Pedido_Origem']}", unsafe_allow_html=True)
                         if c3.button("↩️ Desfazer", key=f"btn_des_{r['Pedido']}"):
                             alterar_status_retira(r['Pedido'], r, "Sim")
                             time.sleep(0.5); st.rerun()
