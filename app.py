@@ -18,9 +18,10 @@ st.set_page_config(
 st.markdown("""
 <style>
     .stButton > button { border-radius: 20px; font-weight: bold; height: 3em; }
-    div[data-testid="stSidebarUserContent"] img {
-        border-radius: 50% !important; object-fit: cover !important;
-        aspect-ratio: 1 / 1 !important; border: 3px solid #2E86C1;
+    [data-testid="stSidebar"] [data-testid="stImage"] img {
+        border-radius: 50%; object-fit: cover;
+        aspect-ratio: 1 / 1; border: 3px solid #2E86C1;
+        display: block; margin-left: auto; margin-right: auto;
     }
     div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] {
         background-color: #f9f9f9; border-radius: 15px; margin-bottom: 10px;
@@ -162,10 +163,13 @@ if not st.session_state['logado']:
     if st.button("ENTRAR", use_container_width=True):
         dados = autenticar(u, s)
         if dados is not None:
-            st.session_state.update({'logado': True, 'usuario': dados["Usuario"], 'usuario_nome_sistema': dados["Nome"], 'funcao': dados["Funcao"]})
+            foto_url = dados["Foto_URL"] if "Foto_URL" in dados else ""
+            st.session_state.update({'logado': True, 'usuario': dados["Usuario"], 'usuario_nome_sistema': dados["Nome"], 'funcao': dados["Funcao"], 'foto_url': foto_url})
             st.rerun()
         else: st.error("Incorreto.")
 else:
+    if st.session_state.get('foto_url'):
+        st.sidebar.image(st.session_state['foto_url'], width=150)
     st.sidebar.title(f"👤 {st.session_state['usuario_nome_sistema']}")
     if st.sidebar.button("Sair"):
         st.session_state['logado'] = False
